@@ -216,3 +216,20 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project-generated data/output directories (produced by the scripts in src/ and hpc/)
+/data_simulation/
+/data_simulation_wide/
+/input_sim/
+/input_real/
+/input_real_2/
+/output/
+/output_real/
+
+# R
+.Rhistory
+.Rdata
+.Rproj.user
+*.Rout
+*.rda
+
