@@ -1,0 +1,305 @@
+
+#%%
+
+
+
+
+import numpy as np
+import pandas as pd
+from scipy.stats import skewnorm, t
+import os
+os.getcwd()
+# Create directory if it doesn't exist
+os.makedirs("data_simulation", exist_ok=True)
+
+
+# Scenario I
+
+def generate_scenario_I(n):
+    x_D_bar_1 = np.random.normal(size=n)
+    x_D_1 = np.random.normal(size=n)
+    true_mean_Y_bar = 0.5
+    true_mean_Y = 1.0
+    Y_generated_bar = np.random.normal(true_mean_Y_bar, 0.5, n)
+    Y_generated = np.random.normal(true_mean_Y, 1, n)
+    
+    healthy_data = pd.DataFrame({
+        'Y_generated': Y_generated_bar,
+        'True_Mean_Y': true_mean_Y_bar,
+        'x_D_1': x_D_bar_1,
+        'mortstat': 0
+    })
+    diseased_data = pd.DataFrame({
+        'Y_generated': Y_generated,
+        'True_Mean_Y': true_mean_Y,
+        'x_D_1': x_D_1,
+        'mortstat': 1
+    })
+    
+    return pd.concat([healthy_data, diseased_data], ignore_index=True)
+
+# Scenario II
+def generate_scenario_II(n):
+    x_D_bar_1 = np.random.normal(size=n)
+    x_D_1 = np.random.normal(size=n)
+    true_mean_Y_bar = 0.5 + (2 * x_D_bar_1 - 10) / 23
+    true_mean_Y = 1 + (2 * x_D_1 - 10) / 23
+
+    Y_generated_bar = np.random.normal(true_mean_Y_bar, 0.5, n)
+    Y_generated = np.random.normal(true_mean_Y, 1, n)
+    
+    healthy_data = pd.DataFrame({
+        'Y_generated': Y_generated_bar,
+        'True_Mean_Y': true_mean_Y_bar,
+        'x_D_1': x_D_bar_1,
+        'mortstat': 0
+    })
+    diseased_data = pd.DataFrame({
+        'Y_generated': Y_generated,
+        'True_Mean_Y': true_mean_Y,
+        'x_D_1': x_D_1,
+        'mortstat': 1
+    })
+    
+    return pd.concat([healthy_data, diseased_data], ignore_index=True)
+
+# Scenario III
+def generate_scenario_III(n):
+    x_D_bar_1 = np.random.normal(size=n)
+    x_D_1 = np.random.normal(size=n)
+    true_mean_Y_bar = 0.25 + 0.5 * (2 * x_D_bar_1 - 10) / 23
+    true_mean_Y = 0.75 + (2 * x_D_1 - 10) / 23
+    Y_generated_bar = np.random.normal(true_mean_Y_bar, 0.5, n)
+    Y_generated = np.random.normal(true_mean_Y, 1, n)
+    
+
+    healthy_data = pd.DataFrame({
+        'Y_generated': Y_generated_bar,
+        'True_Mean_Y': true_mean_Y_bar,
+        'x_D_1': x_D_bar_1,
+        'mortstat': 0
+    })
+    diseased_data = pd.DataFrame({
+        'Y_generated': Y_generated,
+        'True_Mean_Y': true_mean_Y,
+        'x_D_1': x_D_1,
+        'mortstat': 1
+    })
+    
+    return pd.concat([healthy_data, diseased_data], ignore_index=True)
+
+# Scenario IV
+def generate_scenario_IV(n):
+    x_D_bar_1 = np.random.normal(size=n)
+    x_D_1 = np.random.normal(size=n)
+    true_mean_Y_bar = 5 + 3 * ((x_D_bar_1 + 8) / 23)**2 - 25 * (((x_D_bar_1 + 8) / 23) - 0.2)**3 + 250 * (((x_D_bar_1 + 8) / 23) - 0.65)**3
+    true_mean_Y = -3 - 0.6 * ((x_D_1 + 8) / 23)
+    Y_generated_bar = np.random.normal(true_mean_Y_bar, 0.5, n)
+    Y_generated = np.random.normal(true_mean_Y, 1, n)
+    
+    healthy_data = pd.DataFrame({
+        'Y_generated': Y_generated_bar,
+        'True_Mean_Y': true_mean_Y_bar,
+        'x_D_1': x_D_bar_1,
+        'mortstat': 0
+    })
+    diseased_data = pd.DataFrame({
+        'Y_generated': Y_generated,
+        'True_Mean_Y': true_mean_Y,
+        'x_D_1': x_D_1,
+        'mortstat': 1
+    })
+    
+    return pd.concat([healthy_data, diseased_data], ignore_index=True)
+
+# Add similar structure for other scenarios
+# The same structure can be repeated for Scenarios V through IX with the specific `true_mean_Y_bar` and `true_mean_Y` calculations for each scenario.
+
+
+# Scenario V
+def generate_scenario_V(n):
+    x_D_bar_1 = np.random.normal(size=n)
+    x_D_bar_2 = np.random.normal(size=n)
+    x_D_1 = np.random.normal(size=n)
+    x_D_2 = np.random.normal(size=n)
+    
+    true_mean_Y_bar = 0.5 * np.exp((2 * x_D_bar_1 - 10) / 10) - 2 * ((2 * x_D_bar_2**2 - 10) / 10)
+    true_mean_Y = 0.5 * np.sin(np.pi * ((2 * x_D_1 - 10  ) / 10 + 1)) + 0.5 * np.exp((2 * x_D_1 - 10) / 10)
+    Y_generated_bar = np.random.normal(true_mean_Y_bar, 0.5, n)
+    Y_generated = np.random.normal(true_mean_Y, 1, n)
+    
+    healthy_data = pd.DataFrame({
+        'Y_generated': Y_generated_bar,
+        'True_Mean_Y': true_mean_Y_bar,
+        'x_D_1': x_D_bar_1,
+        'x_D_2': x_D_bar_2,
+        'mortstat': 0
+    })
+    
+    diseased_data = pd.DataFrame({
+        'Y_generated': Y_generated,
+        'True_Mean_Y': true_mean_Y,
+        'x_D_1': x_D_1,
+        'x_D_2': x_D_2,
+        'mortstat': 1
+    })
+    
+    return pd.concat([healthy_data, diseased_data], ignore_index=True)
+
+# Scenario VI
+def generate_scenario_VI(n):
+    x_D_bar_1 = np.random.normal(size=n)
+    x_D_bar_3 = np.random.binomial(1, 0.5, size=n)
+    x_D_1 = np.random.normal(size=n)
+    x_D_3 = np.random.normal(size=n)
+    
+    true_mean_Y_bar = -np.sin(0.7 * np.pi * ((2 * x_D_bar_1 - 10) / 10 + 30)) * x_D_bar_3 + ((2 * x_D_bar_1 - 10) / 10)**2 * (1 - x_D_bar_3)
+    true_mean_Y = 0.5 + ((2 * x_D_1 - 10) / 10)**2
+    
+    Y_generated_bar = np.random.normal(true_mean_Y_bar, 0.5, n)
+    Y_generated = np.random.normal(true_mean_Y, 1, n)
+    
+    healthy_data = pd.DataFrame({
+        'Y_generated': Y_generated_bar,
+        'True_Mean_Y': true_mean_Y_bar,
+        'x_D_1': x_D_bar_1,
+        'x_D_3': x_D_bar_3,
+        'mortstat': 0
+    })
+    
+    diseased_data = pd.DataFrame({
+        'Y_generated': Y_generated,
+        'True_Mean_Y': true_mean_Y,
+        'x_D_1': x_D_1,
+        'x_D_3': x_D_3,
+        'mortstat': 1
+    })
+    
+    return pd.concat([healthy_data, diseased_data], ignore_index=True)
+
+# Scenario VII
+def generate_scenario_VII(n):
+    x_D_bar_4 = np.random.uniform(0, 1, size=n)
+    x_D_4 = np.random.uniform(0, 1, size=n)
+    
+    true_mean_Y_bar = np.where(np.random.uniform(size=n) < np.exp(-2 * x_D_bar_4),
+                               skewnorm.rvs(a=2, loc=x_D_bar_4**2, scale=0.25, size=n),
+                               t.rvs(df=5, loc=np.sin(np.pi * x_D_bar_4), scale=0.25, size=n))
+    
+    true_mean_Y = np.sin(2 * np.pi * x_D_4) + 1.5
+    
+    Y_generated_bar = true_mean_Y_bar
+    Y_generated = np.random.normal(true_mean_Y, 0.5, n)
+    
+    healthy_data = pd.DataFrame({
+        'Y_generated': Y_generated_bar,
+        'True_Mean_Y': true_mean_Y_bar,
+        'x_D_1': x_D_bar_4,
+        'mortstat': 0
+    })
+    
+    diseased_data = pd.DataFrame({
+        'Y_generated': Y_generated,
+        'True_Mean_Y': true_mean_Y,
+        'x_D_1': x_D_4,
+        'mortstat': 1
+    })
+    
+    return pd.concat([healthy_data, diseased_data], ignore_index=True)
+
+# Scenario VIII
+def generate_scenario_VIII(n):
+    # Generate four continuous covariates for healthy and diseased groups
+    x_D_bar_5 = np.random.normal(size=n)
+    x_D_bar_6 = np.random.normal(size=n)
+    x_D_bar_7 = np.random.normal(size=n)
+    x_D_bar_8 = np.random.normal(size=n)
+
+    x_D_5 = np.random.normal(size=n)
+    x_D_6 = np.random.normal(size=n)
+    x_D_7 = np.random.normal(size=n)
+    x_D_8 = np.random.normal(size=n)
+
+    # Outcome distributions remain the same as Scenario I
+    true_mean_Y_bar = 0.5
+    true_mean_Y = 1.0
+
+    Y_generated_bar = np.random.normal(true_mean_Y_bar, 0.5, n)
+    Y_generated = np.random.normal(true_mean_Y, 1, n)
+
+    # Create data for the healthy group
+    healthy_data = pd.DataFrame({
+        'Y_generated': Y_generated_bar,
+        'True_Mean_Y': true_mean_Y_bar,
+        'x_D_1': x_D_bar_5,
+        'x_D_6': x_D_bar_6,
+        'x_D_7': x_D_bar_7,
+        'x_D_8': x_D_bar_8,
+        'mortstat': 0  # Healthy group
+    })
+
+    # Create data for the diseased group
+    diseased_data = pd.DataFrame({
+        'Y_generated': Y_generated,
+        'True_Mean_Y': true_mean_Y,
+        'x_D_1': x_D_5,
+        'x_D_6': x_D_6,
+        'x_D_7': x_D_7,
+        'x_D_8': x_D_8,
+        'mortstat': 1  # Diseased group
+    })
+
+    # Combine healthy and diseased data
+    return pd.concat([healthy_data, diseased_data], ignore_index=True)
+
+# Scenario IX
+def generate_scenario_IX(n):
+    
+    x_D_bar_5 = np.random.uniform(-1, 1, size=n)
+    x_D_bar_6 = np.random.uniform(-1, 1, size=n)
+    x_D_bar_7 = np.random.uniform(-1, 1, size=n)
+    x_D_bar_8 = np.random.uniform(-1, 1, size=n)
+    x_D_5 = np.random.uniform(-1, 1, size=n)
+    x_D_6 = np.random.uniform(-1, 1, size=n)
+    x_D_7 = np.random.uniform(-1, 1, size=n)
+    x_D_8 = np.random.uniform(-1, 1, size=n)
+    true_mean_Y_bar = 0.5 * np.exp(2 * x_D_bar_5) - x_D_bar_6**2 + (0.5 * x_D_bar_7**2) + x_D_bar_8
+    true_mean_Y = 0.5 + 0.5 * np.exp(2 * x_D_5) - x_D_6**2 +(0.5 * x_D_7**2) + x_D_8
+
+    Y_generated_bar = np.random.normal(true_mean_Y_bar, 0.5, n)
+    Y_generated = np.random.normal(true_mean_Y, 1, n)
+    
+    healthy_data = pd.DataFrame({
+        'Y_generated': Y_generated_bar,
+        'True_Mean_Y': true_mean_Y_bar,
+        'x_D_1': x_D_bar_5,
+        'x_D_6': x_D_bar_6,
+        'x_D_7': x_D_bar_7,
+        'x_D_8': x_D_bar_8,
+        'mortstat': 0
+    })
+    
+    diseased_data = pd.DataFrame({
+        'Y_generated': Y_generated,
+        'True_Mean_Y': true_mean_Y,
+        'x_D_1': x_D_5,
+        'x_D_6': x_D_6,
+        'x_D_7': x_D_7,
+        'x_D_8': x_D_8,    
+        'mortstat': 1
+    })
+    
+    return pd.concat([healthy_data, diseased_data], ignore_index=True)
+
+# Sample size
+sample_sizes = [5000]
+
+# Generating data and saving as CSV files for each scenario
+scenarios = [generate_scenario_I, generate_scenario_II, generate_scenario_III, generate_scenario_IV,generate_scenario_V,generate_scenario_VI,generate_scenario_VII,generate_scenario_VIII,generate_scenario_IX]
+for n in sample_sizes:
+    for i, generate_fn in enumerate(scenarios, 1):
+        df = generate_fn(n) 
+        df.to_csv(f"data_simulation/scenario_{i}_{n}_data.csv", index=False)
+
+# %%
+
