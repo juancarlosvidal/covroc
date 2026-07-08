@@ -1,3 +1,13 @@
+"""Semiparametric linear-regression baseline for the covariate-adjusted ROC curve,
+a Python port of the location-scale cROC.sp estimator from the R package ROCnReg
+(Rodriguez-Alvarez, related to Related Work / Statistical Methods for Covariate-
+Adjusted ROC). Two OLS models (statsmodels) estimate mu_h(x)/sigma_h and
+mu_d(x)/sigma_d for the healthy and diseased groups; a(x) and b(x) follow the same
+formulas as the paper's Gaussian location-scale model, and cROC_sp() adds bootstrap
+confidence intervals by resampling the OLS residuals (do_boost_roc). This linear
+model is the semiparametric benchmark shown to underperform the FNN and Random
+Forest approaches under non-linear/interaction covariate effects.
+"""
 #%%
 import numpy as np
 import pandas as pd

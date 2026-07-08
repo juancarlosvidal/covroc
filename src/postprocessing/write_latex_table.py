@@ -1,3 +1,5 @@
+# Generic LaTeX table writers used to build the simulation-scenario MSE tables
+# (statistics_summary.py output) reported in the paper's Supplementary Material.
 import os
 
 class LatexTableWriter:

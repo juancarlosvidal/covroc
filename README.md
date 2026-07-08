@@ -2,14 +2,17 @@
 
 Code accompanying the paper:
 
-> [PAPER TITLE] — [AUTHORS] — [JOURNAL / VENUE, YEAR]
-> [DOI / LINK]
+> **Covariate-Adjusted ROC Analysis Using Neural Networks for Biomarker Evaluation**
+> Ziad Akram Ali Hammouri, Yating Zou, Rahul Ghosal, Juan C. Vidal, Marcos Matabuena
+> Preprint (DOI / venue to be added upon publication)
 >
-> If you use this code, please cite: [CITATION]
+> If you use this code, please cite the paper above.
 
-This repository implements and compares covariate-adjusted ROC (cROC/AROC) curve estimation methods: an MLP-based regression approach, a Random Forest regression approach, an NN-based cROC baseline, a linear-regression baseline, and the semiparametric `AROC.sp`/`cROC.sp` estimators from the R package [`ROCnReg`](https://cran.r-project.org/package=ROCnReg). It also includes a classification pipeline with temperature scaling used in the paper.
+This repository implements and compares covariate-adjusted ROC (aROC/cROC) curve estimation methods for biomarker evaluation: a feedforward neural network (FNN) approach, a Random Forest regression approach, an NN-based cROC baseline, a linear-regression baseline, and the semiparametric `AROC.sp`/`cROC.sp` estimators from the R package [`ROCnReg`](https://cran.r-project.org/package=ROCnReg). It also includes a classification pipeline with temperature scaling used in the paper.
 
-The real-data experiments use variables derived from NHANES (`mortstat`, `RIDAGEYR`/Age, `BMI`, `Cancer`), included under `data/`.
+**Method.** Both the FNN and Random Forest pipelines follow the paper's two-stage semiparametric approach (Methods, *Proposed framework: two-stage Semi-Parametric Neural Network Approach*): under a Gaussian location-scale model `Y | (X=x, D=d) ~ mu_d(x) + sigma_d(x) * eps`, a first regression stage estimates the conditional mean `mu_d(x)` for each group `d in {0,1}` (controls/cases), and a second stage estimates the conditional variance `sigma_d(x)^2` from the squared residuals of the first. The covariate-specific ROC curve is then obtained from `a(x) = (mu_1(x) - mu_0(x)) / sigma_1(x)` and `b(x) = sigma_0(x) / sigma_1(x)` via `aROC(p|x) = 1 - Phi(b(x) * Phi^-1(1-p) - a(x))`, with the AUC integrated numerically (`roc()` in `mlp_reg.py`/`mlp_reg_data_simulation_multi.py`/`rf_reg_data_simulation_multi_2.py`) using the empirical CDFs of the training residuals rather than assuming Gaussian errors. This code produces point estimates of the aROC/AUC surface; the subject-level bootstrap, cross-fitting, and out-of-bag aggregation used for the paper's confidence bands (Methods, *Uncertainty Quantification for Estimated ROC Curves*) are not included here, with the exception of the residual-bootstrap confidence intervals in the linear-regression baseline (`src/baselines/croc_linear_baseline.py`).
+
+**Case study.** The real-data experiments evaluate total activity count (TAC), a proxy for daily step count derived from NHANES 2011–2014 accelerometry (MIMS units), as a biomarker for all-cause mortality at 3-, 5-, and 8-year horizons, adjusted for age, sex, and BMI (`n = 5,006`; see Table 1 of the paper). The corresponding group/target variables in the real-data pipeline are named in Spanish: `tres` (3-year), `cinco` (5-year), and `ocho` (8-year) mortality status, plus `mortstat` for overall mortality; the biomarker column is `TAC`/`TAC2`. Variables derived from NHANES (`mortstat`, `RIDAGEYR`/Age, `BMI`, `Cancer`, `TAC`) are included under `data/`.
 
 ## Repository structure
 
@@ -17,18 +20,21 @@ The real-data experiments use variables derived from NHANES (`mortstat`, `RIDAGE
 data/                    CSV datasets (NHANES-derived, public/anonymized)
 src/
   simulation/             Simulated-data pipeline (wired into hpc/ SLURM scripts)
-    data_generation.py            generates the 9 simulation scenarios
+    data_generation.py            generates the 9 simulation scenarios (Scenarios I-IX, Supplementary
+                                   Material) with linear, non-linear, and interaction covariate effects
     data_simulation_reg.py        dataset loader for the simulation pipeline
-    mlp_reg_data_simulation_multi.py   MLP regression training/eval entrypoint
-    rf_reg_data_simulation_multi_2.py  Random Forest regression training/eval entrypoint
+    mlp_reg_data_simulation_multi.py   two-stage FNN mean/variance regression + aROC/AUC entrypoint
+    rf_reg_data_simulation_multi_2.py  same two-stage pipeline with a Random Forest regressor
   real_data/              Regression pipeline on real (NHANES-derived) data
-    data_reg_real.py
-    mlp_reg.py
+    data_reg_real.py              dataset loader; TAC/TAC2 biomarker, age/BMI/sex covariates
+    mlp_reg.py                    two-stage FNN pipeline producing the age x BMI AUC surfaces
+                                   (Figures 2-4: 'tres'/'cinco'/'ocho' = 3-/5-/8-year mortality)
   classification/         Classification pipeline with temperature scaling
     data.py, models.py, losses.py, metrics.py, temperature_scaling.py, train.py
     croc_nn_baseline.py            NN-based cROC baseline (uses train.cv_loop)
   baselines/
-    croc_linear_baseline.py        linear-regression (statsmodels) cROC baseline
+    croc_linear_baseline.py        semiparametric linear-regression cROC baseline with residual
+                                    bootstrap confidence intervals (Python port of ROCnReg::cROC.sp)
   postprocessing/
     convert_to_wide.py             reshape simulation output to wide form
     statistics_summary.py          aggregate MSE statistics across output folders

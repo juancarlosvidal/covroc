@@ -1,3 +1,5 @@
+"""Dataset loader and torch Dataset wrapper shared by train.py/croc_nn_baseline.py
+(same {x, y, w} dict convention as data_simulation_reg.py and data_reg_real.py)."""
 #%%
 import pandas as pd
 import numpy as np

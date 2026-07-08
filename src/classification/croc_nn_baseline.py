@@ -1,4 +1,10 @@
-
+"""NN-based cROC baseline: same two-stage location-scale estimator as
+src/real_data/mlp_reg.py (mean network via train.cv_loop, then a second network on
+the residuals for the variance), but reusing the generic classification/regression
+training loop in train.py instead of the simulation/real_data-specific MLP classes.
+Used as an alternative FNN implementation for the covariate-specific ROC/AUC of TAC2
+against the linear baseline in croc_linear_baseline.py.
+"""
 #%% Neural Network–Based cROC Estimation (using NN instead of OLS)
 import numpy as np
 import pandas as pd

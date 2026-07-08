@@ -1,3 +1,4 @@
+# Sample-weighted MSE loss used to fit the location-scale mean/variance networks.
 import torch
 from torch import Tensor
 from torch.nn.modules import Module

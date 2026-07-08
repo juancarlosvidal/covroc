@@ -1,3 +1,11 @@
+"""Dataset loader for the NHANES 2011-2014 case study (src/real_data/mlp_reg.py).
+
+Loads the accelerometry-derived total activity count (TAC/TAC2) biomarker together
+with age (RIDAGEYR.x), sex (RIAGENDR), BMI, and other clinical covariates, and splits
+subjects into the two ROC reference groups (survivors vs. decedents, or 'var_to_group'
+in {'tres', 'cinco', 'ocho', 'mortstat'} for the 3-, 5-, 8-year, and overall mortality
+horizons reported in the paper's NHANES analysis).
+"""
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler

@@ -1,3 +1,10 @@
+"""Dataset loader for the simulation pipeline (src/simulation/*_multi*.py).
+
+Splits a scenario CSV produced by data_generation.py into the group-0 (healthy)
+and group-1 (diseased) {'x', 'y', 'w'} dicts consumed by the two-stage mean/variance
+regression networks that estimate mu_d(x) and sigma_d(x) for the location-scale
+aROC model (Methods, Model Estimation via Neural Networks).
+"""
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler

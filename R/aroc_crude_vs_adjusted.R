@@ -1,3 +1,8 @@
+# Illustrates the paper's central motivation (Introduction / The Need for
+# Covariate-Adjusted ROC Analysis): the "crude" pooled ROC curve for Age vs.
+# mortality ignores covariates and can misrepresent discriminative performance,
+# whereas standardizing Age against confounders (Cancer, BMI) before computing the
+# adjusted ROC curve corrects for this population heterogeneity.
 # Load necessary libraries
 library(splines)  # For basis splines in confounder adjustment
 

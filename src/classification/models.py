@@ -1,3 +1,5 @@
+# RegressionModel: the FNN used by train.py/croc_nn_baseline.py for the mean and
+# residual-variance networks of the two-stage location-scale aROC estimator.
 '''import torch.nn as nn
 
 

@@ -1,3 +1,13 @@
+"""Two-stage FNN estimator of the covariate-adjusted ROC curve on the nine simulation
+scenarios (Methods, Proposed framework: two-stage Semi-Parametric Neural Network
+Approach). For each group d in {0,1}, an MLP first estimates the conditional mean
+mu_d(x) (train_model/split_and_train), then a second MLP is trained on the squared
+residuals of the first to estimate the conditional variance sigma_d(x)^2. From these,
+a(x) and b(x) are formed and the aROC/AUC is obtained with roc() by integrating
+1 - Phi(b(x)*Phi^-1(1-p) - a(x)) using the empirical CDFs of the residuals in place
+of the assumed-Gaussian ones. This is the point-estimate counterpart evaluated against
+the semiparametric and Random Forest baselines in the paper's simulation study.
+"""
 import os
 import pandas as pd
 import numpy as np

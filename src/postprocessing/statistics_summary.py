@@ -1,3 +1,7 @@
+"""Aggregates the per-scenario roc_mse_values.csv outputs of the simulation pipeline
+into summary statistics (mean/median/SD/quantiles of AUC MSE), the basis for the
+finite-sample MSE comparison across the nine scenarios reported in the paper's
+Supplementary Material (FNN vs. Random Forest vs. semiparametric benchmark)."""
 #%%
 import argparse
 import os

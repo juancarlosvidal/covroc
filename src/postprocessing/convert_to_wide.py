@@ -1,3 +1,6 @@
+"""Reshapes data_generation.py's long-form scenario CSVs (paired healthy '_bar'
+and diseased columns per row) into the wide, group-labeled form ('mortstat' 0/1)
+expected by the regression loaders in src/simulation/."""
 #%%
 #%%
 import pandas as pd

@@ -1,3 +1,10 @@
+"""Generic cross-validated MLP regression trainer (RegressionModel + weighted MSE).
+
+cv_loop() is the shared training entrypoint reused by croc_nn_baseline.py to fit the
+mean and residual-variance networks of the two-stage location-scale aROC estimator,
+and, run standalone, doubles as the classification-with-temperature-scaling pipeline
+(calibration of the FNN's predictive outputs via ModelWithTemperature).
+"""
 import matplotlib.pyplot as plt
 import os
 import time
