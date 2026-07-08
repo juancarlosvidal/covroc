@@ -1,4 +1,13 @@
+"""Generates the nine synthetic scenarios (Scenarios I-IX) used to benchmark the
+FNN-based aROC estimator in the paper's Supplementary Material.
 
+Each scenario draws a healthy group (D=0, columns suffixed '_bar') and a diseased
+group (D=1) from Y | X = mu_d(x) + sigma_d(x) * eps under a range of covariate-mean
+relationships -- constant, linear, non-linear, and multivariate interaction/mixture
+effects -- with sigma_0 = 0.5 and sigma_1 = 1 held fixed except where a scenario
+varies it explicitly. These mimic the linear, non-linear, and interaction-driven
+covariate effects described in the paper's simulation study.
+"""
 #%%
 
 

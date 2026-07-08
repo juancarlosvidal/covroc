@@ -1,4 +1,9 @@
 
+# Runs the semiparametric AROC.sp/cROC.sp estimators (Rodriguez-Alvarez, ROCnReg) on
+# every scenario/real-data CSV in input_real_2/, i.e. the kernel-smoothing benchmark
+# that the paper's FNN-based location-scale estimator is compared against. Also
+# produces the 1-AUC-vs-age scatter and the BMI x age 3D AUC surface analogous to
+# Figures 2-4 (there computed with the FNN and Random Forest estimators instead).
 #%%
 library('ROCnReg')
 library('plotly')

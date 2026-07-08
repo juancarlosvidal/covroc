@@ -1,3 +1,14 @@
+"""Two-stage FNN aROC pipeline for the NHANES TAC-mortality case study.
+
+Implements the Methods' location-scale approach on real data: for each mortality
+horizon in var_to_group ('tres'=3-year, 'cinco'=5-year, 'ocho'=8-year, 'mortstat'
+=overall), an MLP estimates the conditional mean of TAC given age/BMI/sex for
+survivors (group 0) and decedents (group 1); a second MLP trained on
+log(residual^2) estimates the conditional log-variance. mu/sigma are then combined
+into a(x), b(x) and integrated via roc() to obtain the covariate-specific AUC over
+an age x BMI grid, producing the FNN panels of Figures 2-4 (the U-shaped,
+age-dependent discrimination of TAC reported in the paper).
+"""
 import os
 import pandas as pd
 import numpy as np

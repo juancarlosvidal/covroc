@@ -1,3 +1,5 @@
+# Post-hoc temperature scaling for calibrating the classification pipeline (see
+# README), separate from the two-stage location-scale aROC estimator.
 import torch
 from torch import nn, optim
 from torch.nn import functional as F

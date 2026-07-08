@@ -1,3 +1,4 @@
+# Weighted MAE/MSE/R2 used to track validation performance of the mean/variance networks.
 import numpy as np
 import torch
 from sklearn.metrics import r2_score

@@ -1,3 +1,12 @@
+"""Random Forest counterpart to mlp_reg_data_simulation_multi.py, used in the paper's
+simulation study as the ensemble-learning benchmark for the two-stage location-scale
+aROC estimator: a RandomForestRegressor estimates mu_d(x) per group d in {0,1}
+(cv_loop), a second forest is trained on the squared residuals to estimate sigma_d(x)^2,
+and roc() integrates the resulting aROC(p|x) = 1 - Phi(b(x)*Phi^-1(1-p) - a(x)) using
+the empirical residual CDFs. Relative to the FNN estimator, this benchmark is reported
+in the paper to achieve higher finite-sample error and less stable estimates,
+particularly under non-linear and interaction covariate effects.
+"""
 #%%
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D

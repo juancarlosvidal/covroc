@@ -1,10 +1,13 @@
 #%%
+# Semiparametric AROC.sp benchmark (BMI adjusted for Age and Cancer status, group =
+# mortstat) -- the kernel-smoothing counterpart the paper's FNN estimator is
+# compared against for a single covariate combination.
 # Run this script from the repository root.
 library('ROCnReg')
 data.path <- "data/data_analysis_TD_2003_19.csv"
 df <- read.csv(data.path)
 
-aroc_model <- AROC.sp (formula=BMI ~ Age + Cancer , 
+aroc_model <- AROC.sp (formula=BMI ~ Age + Cancer ,
                         group = 'mortstat',
                         tag.h  = 0 ,
                         data = df,
@@ -12,6 +15,11 @@ aroc_model <- AROC.sp (formula=BMI ~ Age + Cancer ,
 plot(aroc_model)
 
 #%%
+# NHANES data prep for the TAC-mortality case study (Results from the NHANES
+# 2011-2014 Dataset): collapses the per-minute activity matrix (act_mat) into the
+# total activity count (TAC) biomarker used throughout the paper, then writes the
+# pooled dataset plus Cancer/Gender-stratified subsets consumed by the batch
+# AROC.sp/cROC.sp runs below and by the Python pipelines in src/real_data/.
 # Requires data_analysis_TD_2003_19.rda (not included in this repo) placed under data/.
 load('data/data_analysis_TD_2003_19.rda')
 
@@ -52,6 +60,8 @@ write.csv(filtered_data_female, "input_real_2/female_data_sin_cancer.csv", row.n
 
 
 
+# AROC.sp/cROC.sp batch run over the Cancer/Gender-stratified TAC subsets written
+# above -- the semiparametric benchmark for the TAC~BMI+RIDAGEYR aROC surfaces.
 #%%
 library('ROCnReg')
 library('plotly')
@@ -150,6 +160,9 @@ for (csv_file in csv_files) {
 }
  
 
+# Same AROC.sp/cROC.sp batch run, generalized to the nine simulation-scenario CSVs
+# (Y_generated ~ all covariate columns) -- the semiparametric benchmark used in the
+# finite-sample comparison against the FNN and Random Forest estimators.
 #%%
 
 library('ROCnReg')
