@@ -63,9 +63,9 @@ This installs the CPU build of PyTorch by default; for GPU/CUDA support (used by
 
 ### R
 
-R is deliberately **not** managed via `environment.yml`. The `ROCnReg` dependency `cubature` requires a C17 compiler, and the conda-forge `r-base` build for macOS leaves `CC17` undefined in its `Makeconf` (confirmed on r-base 4.3, 4.4, and 4.6) — `install.packages("ROCnReg")` fails inside a conda-installed R on macOS regardless of which extra conda-forge compiler packages are added.
+R is deliberately **not** managed via `environment.yml`. The conda-forge `r-base` build leaves `CC17` undefined in its `Makeconf` (confirmed on r-base 4.3, 4.4, and 4.6), so packages requiring a C17 compiler fail to build through it — including `cubature`, a dependency of `ROCnReg` — regardless of which extra conda-forge compiler packages are added.
 
-Install R yourself instead — the [official CRAN installer](https://cran.r-project.org/) or Homebrew (`brew install r`) both ship a toolchain that compiles `cubature` fine — then install the packages the `R/` scripts need:
+Install R directly instead (e.g. via the [official CRAN installer](https://cran.r-project.org/) or your OS's package manager), which ships a complete toolchain and compiles `cubature` fine, then install the packages the `R/` scripts need:
 
 ```r
 install.packages(c("ROCnReg", "plotly", "htmlwidgets", "webshot2", "dplyr"))
