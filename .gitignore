@@ -233,3 +233,6 @@ __marimo__/
 *.Rout
 *.rda
 
+# Claude Code local session state
+.claude/
+
