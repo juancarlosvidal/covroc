@@ -1,0 +1,15 @@
+name: covroc
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy<2  # pytorch (this build) is compiled against the NumPy 1.x ABI
+  - pandas
+  - scipy
+  - scikit-learn
+  - statsmodels
+  - matplotlib
+  - seaborn
+  - pytorch
