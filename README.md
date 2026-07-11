@@ -53,9 +53,11 @@ archive/
 ## Setup
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+conda env create -f environment.yml
+conda activate covroc
 ```
+
+This installs the CPU build of PyTorch by default; for GPU/CUDA support (used by the `hpc/` SLURM jobs), follow the [PyTorch install instructions](https://pytorch.org/get-started/locally/) for your CUDA version instead, e.g. `conda install pytorch pytorch-cuda=<version> -c pytorch -c nvidia`.
 
 R scripts additionally require the `ROCnReg`, `splines`, `plotly`, `htmlwidgets`, `webshot2`, and `dplyr` packages.
 
