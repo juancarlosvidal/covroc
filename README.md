@@ -52,6 +52,8 @@ archive/
 
 ## Setup
 
+### Python
+
 ```bash
 conda env create -f environment.yml
 conda activate covroc
@@ -59,7 +61,17 @@ conda activate covroc
 
 This installs the CPU build of PyTorch by default; for GPU/CUDA support (used by the `hpc/` SLURM jobs), follow the [PyTorch install instructions](https://pytorch.org/get-started/locally/) for your CUDA version instead, e.g. `conda install pytorch pytorch-cuda=<version> -c pytorch -c nvidia`.
 
-R scripts additionally require the `ROCnReg`, `splines`, `plotly`, `htmlwidgets`, `webshot2`, and `dplyr` packages.
+### R
+
+R is deliberately **not** managed via `environment.yml`. The `ROCnReg` dependency `cubature` requires a C17 compiler, and the conda-forge `r-base` build for macOS leaves `CC17` undefined in its `Makeconf` (confirmed on r-base 4.3, 4.4, and 4.6) — `install.packages("ROCnReg")` fails inside a conda-installed R on macOS regardless of which extra conda-forge compiler packages are added.
+
+Install R yourself instead — the [official CRAN installer](https://cran.r-project.org/) or Homebrew (`brew install r`) both ship a toolchain that compiles `cubature` fine — then install the packages the `R/` scripts need:
+
+```r
+install.packages(c("ROCnReg", "plotly", "htmlwidgets", "webshot2", "dplyr"))
+```
+
+(`splines` ships with base R, no separate install needed.)
 
 ## Running the pipeline
 
