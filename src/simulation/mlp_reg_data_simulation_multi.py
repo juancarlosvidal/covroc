@@ -9,6 +9,7 @@ of the assumed-Gaussian ones. This is the point-estimate counterpart evaluated a
 the semiparametric and Random Forest baselines in the paper's simulation study.
 """
 import os
+import time
 import pandas as pd
 import numpy as np
 import random
@@ -27,6 +28,8 @@ from statsmodels.distributions.empirical_distribution import ECDF
 import glob
 import re
 import matplotlib.pyplot as plt
+import true_dgp
+import ground_truth_auc
 
 # Definición del MLP parametrizable para regresión
 class MLP(nn.Module):
@@ -261,6 +264,10 @@ def main(config):
             if match:
                 sceminario = match.group(1)
             # print (sceminario)
+            scenario_num = int(re.match(r'^scenario_(\d+)_', f).group(1))
+            ground_truth_cols = true_dgp.covariate_columns(scenario_num)
+            X0_true = index_0[ground_truth_cols].to_numpy(dtype=float)
+            X1_true = index_1[ground_truth_cols].to_numpy(dtype=float)
             data, data_0, data_1 = load_data(file, selected_combination, target,var_to_group)
             output_folder = f'{args.output_file}/{var_to_group}/{sceminario}'
             op= f'{args.output_file}/{sceminario}'
@@ -270,8 +277,11 @@ def main(config):
                 os.remove(file1)
 
             output_file = f'{args.output_file}'
+            fit_seconds_total = 0.0
+            t0 = time.perf_counter()
             model_0 = split_and_train(data_0, config)
             model_1 = split_and_train(data_1, config)
+            fit_seconds_total += time.perf_counter() - t0
 
             #residues_0 = compute_residues(data_0, model_0)
             residues_0 = compute_residues(data_0, model_0)
@@ -296,6 +306,7 @@ def main(config):
                 'y': residues_0,
                 'w': data_0['w'],
             }
+            t0 = time.perf_counter()
             model_0_r = split_and_train(data_0_r, config)
 
             data_1_r = {
@@ -304,23 +315,32 @@ def main(config):
                 'w': data_1['w'],
             }
             model_1_r = split_and_train(data_1_r, config)
+            fit_seconds_total += time.perf_counter() - t0
 
             mean_0 = compute_mean(data_0, model_0)
             mean_1 = compute_mean(data_1, model_1)
             std_0 = compute_std(data_0_r, model_0_r)
             std_1 = compute_std(data_1_r, model_1_r)
 
+            # true_dgp.true_std returns None for Scenario 7's healthy arm (skew-normal/t
+            # mixture, no closed-form std) -- becomes NaN in the DataFrame, which is
+            # honest: there is no single scalar to report there. The ground-truth ROC/AUC
+            # computation below does not depend on this column; it goes through
+            # ground_truth_auc, which handles that scenario via Monte Carlo instead.
+            real_std_0 = true_dgp.true_std(scenario_num, 0)
+            real_std_1 = true_dgp.true_std(scenario_num, 1)
+
             results_healthy = pd.DataFrame({
                 'Real Mean': media_verdadera_bar,
                 'Predicted Mean': mean_0.flatten(),
-                'Real Std Dev': 0.5,
+                'Real Std Dev': real_std_0,
                 'Predicted Std Dev': std_0.flatten()
             })
 
             results_diseased = pd.DataFrame({
                 'Real Mean': media_verdadera,
                 'Predicted Mean': mean_1.flatten(),
-                'Real Std Dev': 1,
+                'Real Std Dev': real_std_1,
                 'Predicted Std Dev': std_1.flatten()
             })
 
@@ -338,7 +358,7 @@ def main(config):
             "Scenario":        healthy_tex,
             "Real Mean":       media_verdadera_bar.mean(),
             "Predicted Mean":  mean_0.mean(),
-            "Real Std Dev":    0.5,
+            "Real Std Dev":    real_std_0,
             "Predicted Std Dev": std_0.mean(),
             "Generated Y":     data_0['y'].mean(),
             "Residues":        residues_0.mean(),
@@ -348,7 +368,7 @@ def main(config):
             "Scenario":        diseased_tex,
             "Real Mean":       media_verdadera.mean(),
             "Predicted Mean":  mean_1.mean(),
-            "Real Std Dev":    1.0,
+            "Real Std Dev":    real_std_1,
             "Predicted Std Dev": std_1.mean(),
             "Generated Y":     data_1['y'].mean(),
             "Residues":        residues_1.mean(),
@@ -438,13 +458,12 @@ def main(config):
                             )
 
 
-            a_real = np.where(results_diseased['Real Mean'].values > results_healthy['Real Mean'].values,
-                            (results_diseased['Real Mean'].values - results_healthy['Real Mean'].values) / results_diseased['Real Std Dev'].values,
-                            (results_healthy['Real Mean'].values - results_diseased['Real Mean'].values) / results_healthy['Real Std Dev'].values)
-
-            b_real = np.where(results_diseased['Real Mean'].values > results_healthy['Real Mean'].values,
-                            results_healthy['Real Std Dev'].values / results_diseased['Real Std Dev'].values,
-                            results_diseased['Real Std Dev'].values / results_healthy['Real Std Dev'].values)
+            # Ground truth aROC(p|x): exact closed form for the eight Gaussian
+            # scenarios, Monte Carlo (via the true DGP) for Scenario 7's non-Gaussian
+            # healthy arm. Replaces the old hardcoded-std closed-form-only computation,
+            # which was wrong for Scenario 7 (Reviewer 1, Major Concern 1).
+            p = np.linspace(0.001, 0.999, 100)
+            roc_real = list(ground_truth_auc.true_roc_curve(scenario_num, X0_true, X1_true, p=p))
 
             area = roc(a_predicted[0], b_predicted[0], residues_0, residues_1)
             print(f'AUC: {area}')
@@ -469,14 +488,7 @@ def main(config):
 
             plt.clf()
 
-            roc_real = []
-            p = np.linspace(0.001, 0.999, 100)
-
-            for i in range(len(a_real)):
-                roc_values_real= roc(a_real[i], b_real[i ], residues_0, residues_1)
-                roc_values_real= 1 - G_D(norm.ppf(1-p) * b_real[i] - a_real[i])
-                roc_real.append(roc_values_real)
-
+            for roc_values_real in roc_real:
                 plt.plot(p, np.array(roc_values_real))
 
             plt.xlabel('1 - Specificity')
@@ -485,18 +497,6 @@ def main(config):
             plt.savefig(f'{output_file}/{sceminario}/roc_plotnn_real_{sceminario}.png')
 
             plt.clf()
-                        # Assuming data_0 and data_1 have 'y' values as the real target values
-            real_output_0 = media_verdadera_bar.values  # Real values for healthy
-            real_output_1 = media_verdadera.values      # Real values for diseased
-    
-            real_output_0 = real_output_0.reshape(-1, 1)
-            real_output_1 = real_output_1.reshape(-1, 1)
-
-            residues_0_real = (data_0['y'] - real_output_0) ** 2
-            residues_1_real = (data_1['y'] - real_output_1) ** 2
-            residues_0_real = residues_0_real.ravel().reshape(-1, 1)  # Flatten and reshape to single column
-            residues_1_real = residues_1_real.ravel().reshape(-1, 1)  # Flatten and reshape to single column
-
 
             a = (mean_1 - mean_0) / std_1
             b = std_0 / std_1
@@ -525,21 +525,14 @@ def main(config):
             plt.savefig(f'{output_file}/{sceminario}/auc_3d_plot_predicted_{sceminario}.png')
             plt.clf()
 
-            # Assuming data_0 and data_1 have 'y' values as the real target values
-            real_output_0 = media_verdadera_bar.values  # Real values for healthy
-            real_output_1 = media_verdadera.values      # Real values for diseased
-            real_output_0 = real_output_0.reshape(-1, 1)
-            real_output_1 = real_output_1.reshape(-1, 1)
-
-            residues_0_real = (data_0['y'] - real_output_0) ** 2
-            residues_1_real = (data_1['y'] - real_output_1) ** 2
-            residues_0_real = residues_0_real.ravel().reshape(-1, 1)  # Flatten and reshape to single column
-            residues_1_real = residues_1_real.ravel().reshape(-1, 1)  # Flatten and reshape to single column
+            # Ground-truth AUC per subject, reused (rather than recomputed via a
+            # separate a_real/b_real/roc() path) from the roc_real curves above.
+            auc_real_flat = np.array([simpson(curve, p) for curve in roc_real])
             auc_grid = np.zeros((len(v2), len(v1)))
 
             for i in range(len(v2)):
                 for j in range(len(v1)):
-                    auc_grid[i, j] = roc(a_real[i * len(v1) + j], b_real[i * len(v1) + j], residues_0_real, residues_1_real)
+                    auc_grid[i, j] = auc_real_flat[i * len(v1) + j]
             # Plotting
             fig = plt.figure()
             ax = plt.axes(projection='3d')
@@ -566,10 +559,22 @@ def main(config):
                 mse = mean_squared_error(real, predicted)
                 mse_values.append(mse)
 
-            # Convert MSE values to a DataFrame and save to CSV
+            # Convert MSE values to a DataFrame and save to CSV. Filename matches what
+            # src/postprocessing/statistics_summary.py looks for in each scenario/
+            # replicate output folder (it previously carried a redundant "_{sceminario}"
+            # suffix, which meant statistics_summary.py never found these files).
             mse_df = pd.DataFrame(mse_values, columns=['Mean Squared Error'])
-            mse_filename = f'{args.output_file}/{sceminario}/roc_mse_values_{sceminario}.csv'
+            mse_filename = f'{args.output_file}/{sceminario}/roc_mse_values.csv'
             mse_df.to_csv(mse_filename, index_label="Object Index")
+
+            # Per-replicate computation time (Reviewer 1, Major Concern 1), aggregated
+            # the same way as roc_mse_values.csv by statistics_summary.py.
+            timing_df = pd.DataFrame([{
+                'Scenario': sceminario,
+                'Method': 'FNN',
+                'Fit Seconds Total': fit_seconds_total,
+            }])
+            timing_df.to_csv(f'{args.output_file}/{sceminario}/timing.csv', index=False)
             #print(len(roc_predicted))
             #print(len(roc_real))
 

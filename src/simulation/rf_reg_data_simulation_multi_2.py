@@ -19,12 +19,15 @@ from statsmodels.distributions.empirical_distribution import ECDF
 from sklearn.model_selection import KFold
 from sklearn.metrics import mean_squared_error
 import random
-import os 
+import os
+import time
 from scipy.stats import norm
 import glob
 from data_simulation_reg import load_data,create_dict_2,create_dict
 from sklearn.model_selection import GridSearchCV
 import re
+import true_dgp
+import ground_truth_auc
 def compute_residues(data, model):
     input_data = data['x']
     output = model.predict(input_data).ravel() 
@@ -134,7 +137,10 @@ if __name__ == '__main__':
             if match:
                 sceminario = match.group(1)
             print (sceminario)
-
+            scenario_num = int(re.match(r'^scenario_(\d+)_', f).group(1))
+            ground_truth_cols = true_dgp.covariate_columns(scenario_num)
+            X0_true = index_0[ground_truth_cols].to_numpy(dtype=float)
+            X1_true = index_1[ground_truth_cols].to_numpy(dtype=float)
 
             op= f'{args.output_dir}/{var_to_group+"_rf"}/{sceminario}'
             if not os.path.exists(op):
@@ -143,8 +149,11 @@ if __name__ == '__main__':
             data, data_0, data_1 = load_data(file, selected_combination,target ,var_to_group)
             print(f"Data_0 shape: {data_0['x'].shape} - Data_1 shape: {data_1['x'].shape}")
 
+            fit_seconds_total = 0.0
+            t0 = time.perf_counter()
             model_0, metrics_0 = cv_loop(data_0, n_folds, n_estimators)
             model_1, metrics_1 = cv_loop(data_1, n_folds, n_estimators)
+            fit_seconds_total += time.perf_counter() - t0
 
             output = model_0.predict(data_0['x'])
             for i in range(len(data_0['y'])):
@@ -176,6 +185,7 @@ if __name__ == '__main__':
                 'y': residues_0 ,
                 'w': data_0['w'],
             }
+            t0 = time.perf_counter()
             model_0_r, metrics_0_r = cv_loop(data_0_r, n_folds, n_estimators)
 
             data_1_r = {
@@ -184,6 +194,7 @@ if __name__ == '__main__':
                 'w': data_1['w'],
             }
             model_1_r, metrics_1_r = cv_loop(data_1_r, n_folds, n_estimators)
+            fit_seconds_total += time.perf_counter() - t0
             print(f"Data_0 shape: {data_0_r['x'].shape} - Data_1 shape: {data_1_r['x'].shape}")
             mean_0 = compute_mean(data_0, model_0)
             mean_1 = compute_mean(data_1, model_1)
@@ -191,17 +202,24 @@ if __name__ == '__main__':
             std_1 = compute_std(data_1_r, model_1_r)
 
 
+            # true_dgp.true_std returns None for Scenario 7's healthy arm (skew-normal/t
+            # mixture, no closed-form std); becomes NaN below, which is honest -- the
+            # ground-truth ROC/AUC comparison further down goes through ground_truth_auc,
+            # which handles that scenario via Monte Carlo instead of this column.
+            real_std_0 = true_dgp.true_std(scenario_num, 0)
+            real_std_1 = true_dgp.true_std(scenario_num, 1)
+
             results_healthy = pd.DataFrame({
                 'Real Mean': media_verdadera_bar,
                 'Predicted Mean': mean_0.flatten(),
-                'Real Std Dev': 0.5,
+                'Real Std Dev': real_std_0,
                 'Predicted Std Dev': std_0.flatten()
             })
 
             results_diseased = pd.DataFrame({
                 'Real Mean': media_verdadera,
                 'Predicted Mean': mean_1.flatten(),
-                'Real Std Dev': 1,
+                'Real Std Dev': real_std_1,
                 'Predicted Std Dev': std_1.flatten()
             })
 
@@ -229,7 +247,7 @@ if __name__ == '__main__':
             "Scenario":        healthy_tex,
             "Real Mean":       media_verdadera_bar.mean(),
             "Predicted Mean":  mean_0.mean(),
-            "Real Std Dev":    0.5,
+            "Real Std Dev":    real_std_0,
             "Predicted Std Dev": std_0.mean(),
             "Generated Y":     data_0['y'].mean(),
             "Residues":        residues_0.mean(),
@@ -239,7 +257,7 @@ if __name__ == '__main__':
             "Scenario":        diseased_tex,
             "Real Mean":       media_verdadera.mean(),
             "Predicted Mean":  mean_1.mean(),
-            "Real Std Dev":    1.0,
+            "Real Std Dev":    real_std_1,
             "Predicted Std Dev": std_1.mean(),
             "Generated Y":     data_1['y'].mean(),
             "Residues":        residues_1.mean(),
@@ -266,7 +284,39 @@ if __name__ == '__main__':
             plt.savefig(f'{args.output_dir}/{var_to_group+"_rf"}/{sceminario}/roc_plotnn_predicted_{dataset_name}_{var_to_group}.png')
 
             plt.clf()
-            
+
+            # Ground truth aROC(p|x): exact closed form for the eight Gaussian
+            # scenarios, Monte Carlo (via the true DGP) for Scenario 7's non-Gaussian
+            # healthy arm. RF previously had no ground-truth comparison at all
+            # (Reviewer 1, Major Concern 1).
+            roc_real = list(ground_truth_auc.true_roc_curve(scenario_num, X0_true, X1_true, p=p))
+
+            for roc_values_real in roc_real:
+                plt.plot(p, np.array(roc_values_real))
+
+            plt.xlabel('1 - Specificity')
+            plt.ylabel('Sensitivity')
+            plt.title(f'Conditional ROC Curves for real {sceminario}_{dataset_name}')
+            plt.savefig(f'{args.output_dir}/{var_to_group+"_rf"}/{sceminario}/roc_plotnn_real_{dataset_name}_{var_to_group}.png')
+
+            plt.clf()
+
+            # Mean Squared Error between predicted and ground-truth ROC curves, per
+            # subject -- matches the roc_mse_values.csv format written by
+            # mlp_reg_data_simulation_multi.py, aggregated by
+            # src/postprocessing/statistics_summary.py.
+            mse_values = [mean_squared_error(real, predicted) for predicted, real in zip(roc_predicted, roc_real)]
+            mse_df = pd.DataFrame(mse_values, columns=['Mean Squared Error'])
+            mse_df.to_csv(f'{args.output_dir}/{var_to_group+"_rf"}/{sceminario}/roc_mse_values.csv', index_label="Object Index")
+
+            # Per-replicate computation time (Reviewer 1, Major Concern 1).
+            timing_df = pd.DataFrame([{
+                'Scenario': sceminario,
+                'Method': 'RF',
+                'Fit Seconds Total': fit_seconds_total,
+            }])
+            timing_df.to_csv(f'{args.output_dir}/{var_to_group+"_rf"}/{sceminario}/timing.csv', index=False)
+
             for i in range(len(a_predicted)):
                 roc_values_predicted = 1 - G_D(norm.ppf(1-p) * b_predicted[i] - a_predicted[i])
                 auc = simpson(roc_values_predicted, p)
