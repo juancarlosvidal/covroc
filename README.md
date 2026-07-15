@@ -14,6 +14,8 @@ This repository implements and compares covariate-adjusted ROC (aROC/cROC) curve
 
 **Ground-truth comparison in the simulation study.** Since the true data-generating process is known for each of the 9 simulation scenarios, `src/simulation/ground_truth_auc.py` computes the true population-level aROC(p|x)/AUC(x) (exact closed form for the 8 Gaussian scenarios, Monte Carlo for Scenario 7's skew-normal/Student-t mixture arm) and every method -- FNN, Random Forest, naive, linear, and semiparametric-additive -- is scored against it via per-subject MSE, plus per-replicate wall-clock fit time, both aggregated by `src/postprocessing/statistics_summary.py` into a single comparison table across methods and scenarios. The Bayesian nonparametric estimator (`ROCnReg::AROC.bnp`) is not included in this Python pipeline: it has no equivalent Python implementation (it's a Dirichlet-process-mixture model specific to that package's authors), and reimplementing it from scratch was judged out of scope; if needed, run it via `ROCnReg` in R and report at least its single-replicate computation time, as the associated review response allows.
 
+**Mean-/std-function estimation metrics (Reviewer 1, Minor Concerns 3 & 4).** Separately from the ROC-curve MSE above, `mlp_reg_data_simulation_multi.py`/`rf_reg_data_simulation_multi_2.py` also report, per replicate and group, `Mean-Function MSE` (predicted vs. true conditional mean) and `Std-Function MSE` (predicted vs. true conditional std, NaN for Scenario 7's healthy arm) into a `mean_std_mse.csv`, replacing the old bare `"MSE"` column (previously computed against the raw noisy `Y` rather than the true mean). `statistics_summary.py` aggregates these into `mean_std_mse_summary.csv`, and `mean_std_mse_boxplots.py` plots them per scenario/sample-size with FNN and RF compared side by side (reproducing the old Figures 10-18, which only showed the FNN). The `"Standard Deviation"` column of the ROC-curve-MSE table is renamed `"MSE SD Across Runs"` so it's never confused with the differently-defined `Std-Function MSE`.
+
 **Simulation scenario corrections (Reviewer 1, Minor Concern 1).** Per the Supplementary Material, covariates are `U(-1, 1)` in every scenario; the code previously drew most of them from `Normal(0, 1)` (Scenarios I-VI, VIII) or `U(0, 1)` (Scenario VII) instead -- now fixed in `data_generation.py`, with two deliberate, documented exceptions: Scenario VI's third covariate stays `Bernoulli(0.5)` (it's used as a 0/1 interaction switch, not a continuous effect) and Scenario VII's covariate stays `U(0, 1)` (its mixture weight `exp(-2x)` is only a valid probability for `x >= 0`). Separately, Scenario III's own formula in the Supplementary Material -- titled "Covariate Effect on Both Mean and Variance" -- actually has constant variance, identical in structure to Scenario II; there was no existing spec to fix it against, so `true_dgp.py` now defines a new, explicitly-designed `sigma(x) = base * exp(0.3*x)` for that scenario only. **Both changes alter the generated data**, so Table 1 and Figures 10-18 in the Supplementary Material are stale until the full 9-scenario x 2-sample-size x 100-replicate sweep (`hpc/py_gen.sh` then the training scripts) is rerun.
 
 **Case study.** The real-data experiments evaluate total activity count (TAC), a proxy for daily step count derived from NHANES 2011–2014 accelerometry (MIMS units), as a biomarker for all-cause mortality at 3-, 5-, and 8-year horizons, adjusted for age, sex, and BMI (`n = 5,006`; see Table 1 of the paper). The corresponding group/target variables in the real-data pipeline are named in Spanish: `tres` (3-year), `cinco` (5-year), and `ocho` (8-year) mortality status, plus `mortstat` for overall mortality; the biomarker column is `TAC`/`TAC2`. Variables derived from NHANES (`mortstat`, `RIDAGEYR`/Age, `BMI`, `Cancer`, `TAC`) are included under `data/`.
@@ -54,7 +56,8 @@ src/
                                     linear_reg_data_simulation.py, for the simulation-scenario baselines
   postprocessing/
     convert_to_wide.py             reshape simulation output to wide form
-    statistics_summary.py          aggregate MSE and per-replicate timing statistics across output folders
+    statistics_summary.py          aggregate MSE, timing, and mean-/std-function MSE statistics across output folders
+    mean_std_mse_boxplots.py       per-scenario Mean-/Std-Function MSE boxplots, methods compared side by side
     write_latex_table.py           helper to build LaTeX tables from results
 R/
   aroc_batch_scenarios.R    AROC.sp/cROC.sp over all scenario CSVs in input_real_2/, incl. 3D surface plots
@@ -138,10 +141,11 @@ Rscript R/aroc_batch_scenarios.R
 Rscript R/aroc_single_model.R
 ```
 
-**7. Post-processing.** `statistics_summary.py` aggregates every replicate folder under `--root-dir` into `roc_mse_values.csv`-based MSE statistics and (from each folder's `timing.csv`) a `timing_summary.csv` of per-scenario, per-method fit time -- e.g. point it at a directory containing one differently-prefixed copy per method (`fnn_scenario_1_.../`, `rf_scenario_1_.../`, `naive_scenario_1_.../`, ...) to get a single FNN-vs-RF-vs-naive-vs-linear-vs-spline comparison table:
+**7. Post-processing.** `statistics_summary.py` aggregates every replicate folder under `--root-dir` into `roc_mse_values.csv`-based MSE statistics, (from each folder's `timing.csv`) a `timing_summary.csv` of per-scenario, per-method fit time, and (from each folder's `mean_std_mse.csv`, written only by the FNN/RF scripts) a `mean_std_mse_summary.csv` -- e.g. point it at a directory containing one differently-prefixed copy per method (`fnn_scenario_1_.../`, `rf_scenario_1_.../`, `naive_scenario_1_.../`, ...) to get a single FNN-vs-RF-vs-naive-vs-linear-vs-spline comparison table. `mean_std_mse_boxplots.py` then plots the FNN-vs-RF Mean-/Std-Function MSE comparison per scenario:
 ```bash
 python src/postprocessing/convert_to_wide.py
-python src/postprocessing/statistics_summary.py --root-dir output --output-csv statistics_summary.csv --timing-csv timing_summary.csv
+python src/postprocessing/statistics_summary.py --root-dir output --output-csv statistics_summary.csv --timing-csv timing_summary.csv --mean-std-mse-csv mean_std_mse_summary.csv
+python src/postprocessing/mean_std_mse_boxplots.py --root-dir output --output-dir output/mean_std_mse_boxplots
 python src/postprocessing/write_latex_table.py
 ```
 

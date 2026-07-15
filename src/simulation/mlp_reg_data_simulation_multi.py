@@ -356,6 +356,20 @@ def main(config):
             healthy_tex  = escaped_base + r'\_healthy'   # 'data\_1\_10\_20\_healthy'
             diseased_tex = escaped_base + r'\_diseased'  # 'data\_1\_10\_20\_diseased'
 
+            # Mean-Function MSE: predicted mean vs the *true* mean (not the raw noisy Y,
+            # which would inflate this by the irreducible noise variance). Std-Function
+            # MSE: predicted std vs the true std (NaN for Scenario 7's healthy arm, which
+            # has no closed-form std). Renamed from the old bare "MSE" and newly added,
+            # respectively, to resolve Reviewer 1's Minor Concern 4 (the appendix's
+            # "MSE Std" -- spread of the ROC-curve MSE across the 100 runs, see
+            # statistics_summary.py -- was textually colliding with Figure 10's "mse_std",
+            # a different per-replicate metric that didn't actually exist in code before).
+            mean_function_mse_0 = mean_squared_error(media_verdadera_bar.to_numpy().ravel(), mean_0.ravel())
+            mean_function_mse_1 = mean_squared_error(media_verdadera.to_numpy().ravel(), mean_1.ravel())
+            std_function_mse_0 = (mean_squared_error(real_std_0, std_0.ravel())
+                                   if real_std_0 is not None else float('nan'))
+            std_function_mse_1 = mean_squared_error(real_std_1, std_1.ravel())
+
             summary_rows.append({
             "Scenario":        healthy_tex,
             "Real Mean":       media_verdadera_bar.mean(),
@@ -364,7 +378,8 @@ def main(config):
             "Predicted Std Dev": std_0.mean(),
             "Generated Y":     data_0['y'].mean(),
             "Residues":        residues_0.mean(),
-            "MSE":             mean_squared_error(data_0['y'], mean_0)
+            "Mean-Function MSE": mean_function_mse_0,
+            "Std-Function MSE": std_function_mse_0
                })
             summary_rows.append({
             "Scenario":        diseased_tex,
@@ -374,8 +389,17 @@ def main(config):
             "Predicted Std Dev": std_1.mean(),
             "Generated Y":     data_1['y'].mean(),
             "Residues":        residues_1.mean(),
-            "MSE":             mean_squared_error(data_1['y'], mean_1)
+            "Mean-Function MSE": mean_function_mse_1,
+            "Std-Function MSE": std_function_mse_1
             })
+
+            mean_std_mse_df = pd.DataFrame([
+                {'Scenario': sceminario, 'Group': 'healthy', 'Method': 'FNN',
+                 'Mean-Function MSE': mean_function_mse_0, 'Std-Function MSE': std_function_mse_0},
+                {'Scenario': sceminario, 'Group': 'diseased', 'Method': 'FNN',
+                 'Mean-Function MSE': mean_function_mse_1, 'Std-Function MSE': std_function_mse_1},
+            ])
+            mean_std_mse_df.to_csv(f'{args.output_file}/{sceminario}/mean_std_mse.csv', index=False)
 
 
             plt.figure(figsize=(10, 6))
@@ -604,7 +628,7 @@ def main(config):
         df_summary = pd.DataFrame(summary_rows,
         columns=[
             'Scenario','Real Mean','Predicted Mean','Real Std Dev',
-            'Predicted Std Dev','Generated Y','Residues','MSE'
+            'Predicted Std Dev','Generated Y','Residues','Mean-Function MSE','Std-Function MSE'
         ]
         )
     # ensure output folder exists
@@ -614,7 +638,7 @@ def main(config):
         tex_path = os.path.join(config["output_file"], "summary_table.tex")
         with open(tex_path, "a", encoding="utf-8") as f:
             f.write("\\begin{table}[ht]\n  \\centering\n")
-            f.write(df_summary.to_latex(index=False, escape=True, column_format="|l|" + "r|"*7))
+            f.write(df_summary.to_latex(index=False, escape=True, column_format="|l|" + "r|"*8))
             f.write("\\caption{Summary of Healthy vs Diseased}\n")
             f.write("\\label{tab:summary}\n")
             f.write("\\end{table}\n")
@@ -623,7 +647,7 @@ def main(config):
         dat_path = os.path.join(config["output_file"], "summary_table.dat")
         with open(dat_path, "a", encoding="utf-8") as f:
             f.write("\\begin{table}[ht]\n  \\centering\n")
-            f.write("  \\begin{tabular}{|" + " l |"*8 + "}\n    \\hline\n")
+            f.write("  \\begin{tabular}{|" + " l |"*9 + "}\n    \\hline\n")
             # header
             f.write("    " + " & ".join(df_summary.columns) + " \\\\\n    \\hline\n")
             # rows
