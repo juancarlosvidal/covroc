@@ -5,11 +5,13 @@ Random Forest, ...) against the true aROC(p|x) instead of only the raw-biomarker
 (Reviewer 1, Major Concern 1).
 
 For the eight Gaussian location-scale scenarios, aROC(p|x) has the closed form used
-throughout the paper: 1 - Phi(b(x)*Phi^-1(1-p) - a(x)). Scenario VII's healthy (D=0)
-arm is a skew-normal/Student-t mixture with no closed form, so its ROC curve is
-instead estimated from Monte Carlo draws of the true DGP via the same empirical-CDF
-construction the roc() estimator in the *_reg_data_simulation* scripts uses on
-residuals -- applied here to raw Y draws from the known population distribution.
+throughout the paper: 1 - Phi(b(x)*Phi^-1(1-p) - a(x)) (true_dgp.true_std is constant
+for all of these except Scenario III, whose std is a designed function of x -- see
+true_dgp.py). Scenario VII's healthy (D=0) arm is a skew-normal/Student-t mixture with
+no closed form, so its ROC curve is instead estimated from Monte Carlo draws of the true
+DGP via the same empirical-CDF construction the roc() estimator in the
+*_reg_data_simulation* scripts uses on residuals -- applied here to raw Y draws from the
+known population distribution.
 """
 import numpy as np
 from scipy.stats import norm
@@ -63,8 +65,8 @@ def true_roc_curve(scenario, X0, X1, p=DEFAULT_P_GRID, n_mc=DEFAULT_N_MC, rng=No
 
     mean0 = true_dgp.true_mean(scenario, 0, X0)
     mean1 = true_dgp.true_mean(scenario, 1, X1)
-    std0 = true_dgp.true_std(scenario, 0)
-    std1 = true_dgp.true_std(scenario, 1)
+    std0 = true_dgp.true_std(scenario, 0, X0)
+    std1 = true_dgp.true_std(scenario, 1, X1)
     a, b = _ab_from_means_stds(mean0, mean1, std0, std1)
     return np.array([_roc_from_ab(a[i], b[i], p) for i in range(n)])
 

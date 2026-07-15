@@ -5,10 +5,15 @@ conditional mean/variance/distribution the estimators (FNN, RF, ...) are being
 compared against. Keeping both uses on the same source avoids the two ever drifting
 apart (Reviewer 1, Major Concern 1).
 
-Every scenario models Y | (X=x, D=d) as Normal(true_mean(x), true_std) EXCEPT
+Every scenario models Y | (X=x, D=d) as Normal(true_mean(x), true_std(x)) EXCEPT
 Scenario VII's healthy (D=0) arm, which is a skew-normal / Student-t mixture with no
-closed-form mean or variance -- true_std raises for that one case, and callers must
-use sample_conditional (Monte Carlo) instead.
+closed-form mean or variance -- true_std returns None for that one case, and callers
+must use sample_conditional (Monte Carlo) instead. sigma is constant (0.5 healthy / 1.0
+diseased, 0.5 for Scenario VII's diseased arm specifically) for every scenario except
+Scenario III, which has a covariate-dependent sigma(x) = base * exp(0.3*x) -- see
+true_std (Reviewer 1, Minor Concern 1: the paper's own Scenario III formula, titled
+"Covariate Effect on Both Mean and Variance", actually has constant variance; this is a
+newly-designed heteroscedastic sigma(x), not a fix to match an existing spec).
 
 Covariate columns consumed by each scenario, in the order true_mean/sample_conditional
 expect them (matches the column names data_generation.py writes to the scenario CSVs):
@@ -16,6 +21,11 @@ expect them (matches the column names data_generation.py writes to the scenario 
     5:             ['x_D_1', 'x_D_2']
     6:             ['x_D_1', 'x_D_3']
     8, 9:          ['x_D_1', 'x_D_6', 'x_D_7', 'x_D_8']
+
+Per the Supplementary Material, covariates are U(-1, 1) in every scenario except two
+deliberate exceptions kept in data_generation.py: Scenario VI's binary switch covariate
+(Bernoulli(0.5)) and Scenario VII's covariate (U(0, 1), required to keep its exp(-2x)
+mixture weight a valid probability -- see data_generation.py for details).
 """
 import numpy as np
 from scipy.stats import skewnorm, t
@@ -100,13 +110,24 @@ def true_mean(scenario, group, X):
     raise ValueError(f"Unknown scenario {scenario}")
 
 
-def true_std(scenario, group):
-    """Constant conditional std sigma_d(x). Returns None for Scenario VII group 0,
-    which has no closed-form std (use sample_conditional instead). Scenario VII group 1
-    is Normal(mean, 0.5), unlike every other scenario's group 1, which is std 1.0."""
+def true_std(scenario, group, X):
+    """Conditional std sigma_d(x), as a per-row array (length X.shape[0]). Returns
+    None for Scenario VII group 0, which has no closed-form std (use
+    sample_conditional instead). Scenario VII group 1 is Normal(mean, 0.5), unlike
+    every other scenario's group 1, which is std 1.0. Scenario III is the only scenario
+    where sigma actually varies with x (see module docstring); everywhere else this is
+    a constant broadcast to an array for a uniform calling convention.
+    """
+    X = np.atleast_2d(X)
+    n = X.shape[0]
     if scenario == 7:
-        return None if group == 0 else 0.5
-    return 0.5 if group == 0 else 1.0
+        if group == 0:
+            return None
+        return np.full(n, 0.5)
+    base = 0.5 if group == 0 else 1.0
+    if scenario == 3:
+        return base * np.exp(0.3 * X[:, 0])
+    return np.full(n, base)
 
 
 def _draw_normal(rng, loc, scale, size):
@@ -142,5 +163,5 @@ def sample_conditional(scenario, group, X, n_mc=1, rng=None):
         return draws.reshape(n, n_mc)
 
     mean = true_mean(scenario, group, X)
-    std = true_std(scenario, group)
-    return _draw_normal(rng, np.repeat(mean, n_mc), std, n * n_mc).reshape(n, n_mc)
+    std = true_std(scenario, group, X)
+    return _draw_normal(rng, np.repeat(mean, n_mc), np.repeat(std, n_mc), n * n_mc).reshape(n, n_mc)

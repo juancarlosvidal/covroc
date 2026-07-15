@@ -202,12 +202,14 @@ if __name__ == '__main__':
             std_1 = compute_std(data_1_r, model_1_r)
 
 
-            # true_dgp.true_std returns None for Scenario 7's healthy arm (skew-normal/t
-            # mixture, no closed-form std); becomes NaN below, which is honest -- the
-            # ground-truth ROC/AUC comparison further down goes through ground_truth_auc,
-            # which handles that scenario via Monte Carlo instead of this column.
-            real_std_0 = true_dgp.true_std(scenario_num, 0)
-            real_std_1 = true_dgp.true_std(scenario_num, 1)
+            # true_dgp.true_std returns a per-subject array (Scenario 3's std varies with
+            # x; every other scenario's is constant, broadcast to the same shape) or None
+            # for Scenario 7's healthy arm (skew-normal/t mixture, no closed-form std);
+            # becomes NaN below, which is honest -- the ground-truth ROC/AUC comparison
+            # further down goes through ground_truth_auc, which handles that scenario via
+            # Monte Carlo instead of this column.
+            real_std_0 = true_dgp.true_std(scenario_num, 0, X0_true)
+            real_std_1 = true_dgp.true_std(scenario_num, 1, X1_true)
 
             results_healthy = pd.DataFrame({
                 'Real Mean': media_verdadera_bar,
@@ -247,7 +249,7 @@ if __name__ == '__main__':
             "Scenario":        healthy_tex,
             "Real Mean":       media_verdadera_bar.mean(),
             "Predicted Mean":  mean_0.mean(),
-            "Real Std Dev":    real_std_0,
+            "Real Std Dev":    real_std_0.mean() if real_std_0 is not None else float('nan'),
             "Predicted Std Dev": std_0.mean(),
             "Generated Y":     data_0['y'].mean(),
             "Residues":        residues_0.mean(),
@@ -257,7 +259,7 @@ if __name__ == '__main__':
             "Scenario":        diseased_tex,
             "Real Mean":       media_verdadera.mean(),
             "Predicted Mean":  mean_1.mean(),
-            "Real Std Dev":    real_std_1,
+            "Real Std Dev":    real_std_1.mean(),
             "Predicted Std Dev": std_1.mean(),
             "Generated Y":     data_1['y'].mean(),
             "Residues":        residues_1.mean(),

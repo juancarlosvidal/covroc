@@ -322,13 +322,15 @@ def main(config):
             std_0 = compute_std(data_0_r, model_0_r)
             std_1 = compute_std(data_1_r, model_1_r)
 
-            # true_dgp.true_std returns None for Scenario 7's healthy arm (skew-normal/t
-            # mixture, no closed-form std) -- becomes NaN in the DataFrame, which is
-            # honest: there is no single scalar to report there. The ground-truth ROC/AUC
-            # computation below does not depend on this column; it goes through
-            # ground_truth_auc, which handles that scenario via Monte Carlo instead.
-            real_std_0 = true_dgp.true_std(scenario_num, 0)
-            real_std_1 = true_dgp.true_std(scenario_num, 1)
+            # true_dgp.true_std returns a per-subject array (Scenario 3's std varies with
+            # x; every other scenario's is constant, broadcast to the same shape) or None
+            # for Scenario 7's healthy arm (skew-normal/t mixture, no closed-form std) --
+            # becomes NaN in the DataFrame, which is honest: there is no single scalar to
+            # report there. The ground-truth ROC/AUC computation below does not depend on
+            # this column; it goes through ground_truth_auc, which handles that scenario
+            # via Monte Carlo instead.
+            real_std_0 = true_dgp.true_std(scenario_num, 0, X0_true)
+            real_std_1 = true_dgp.true_std(scenario_num, 1, X1_true)
 
             results_healthy = pd.DataFrame({
                 'Real Mean': media_verdadera_bar,
@@ -358,7 +360,7 @@ def main(config):
             "Scenario":        healthy_tex,
             "Real Mean":       media_verdadera_bar.mean(),
             "Predicted Mean":  mean_0.mean(),
-            "Real Std Dev":    real_std_0,
+            "Real Std Dev":    real_std_0.mean() if real_std_0 is not None else float('nan'),
             "Predicted Std Dev": std_0.mean(),
             "Generated Y":     data_0['y'].mean(),
             "Residues":        residues_0.mean(),
@@ -368,7 +370,7 @@ def main(config):
             "Scenario":        diseased_tex,
             "Real Mean":       media_verdadera.mean(),
             "Predicted Mean":  mean_1.mean(),
-            "Real Std Dev":    real_std_1,
+            "Real Std Dev":    real_std_1.mean(),
             "Predicted Std Dev": std_1.mean(),
             "Generated Y":     data_1['y'].mean(),
             "Residues":        residues_1.mean(),

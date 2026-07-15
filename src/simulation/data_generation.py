@@ -4,9 +4,19 @@ FNN-based aROC estimator in the paper's Supplementary Material.
 Each scenario draws a healthy group (D=0, columns suffixed '_bar') and a diseased
 group (D=1) from Y | X = mu_d(x) + sigma_d(x) * eps under a range of covariate-mean
 relationships -- constant, linear, non-linear, and multivariate interaction/mixture
-effects -- with sigma_0 = 0.5 and sigma_1 = 1 held fixed except where a scenario
-varies it explicitly. These mimic the linear, non-linear, and interaction-driven
-covariate effects described in the paper's simulation study.
+effects -- with sigma_0 = 0.5 and sigma_1 = 1 held fixed except for Scenario III
+(covariate-dependent sigma(x), see true_dgp.true_std) and Scenario VII's diseased arm
+(sigma = 0.5). These mimic the linear, non-linear, and interaction-driven covariate
+effects described in the paper's simulation study.
+
+Per the Supplementary Material, covariates are U(-1, 1) in every scenario, with two
+deliberate exceptions kept here: Scenario VI's third covariate is a Bernoulli(0.5)
+0/1 switch (its mean formula uses it as an either/or interaction term, not a continuous
+effect -- forcing it to continuous U(-1,1) would change the scenario's design, not just
+its covariate distribution), and Scenario VII's covariate is U(0, 1) (its mixture weight
+is exp(-2x), which is only a valid probability for x >= 0; U(-1,1) would make it exceed 1
+for negative x, silently collapsing the mixture to always pick one branch for half the
+covariate range).
 
 The conditional mean/std/sampling formulas live in true_dgp.py (the single source of
 truth also used by the ground-truth AUC comparison in ground_truth_auc.py) so the two
@@ -32,8 +42,8 @@ os.makedirs("data_simulation", exist_ok=True)
 # Scenario I
 
 def generate_scenario_I(n):
-    x_D_bar_1 = np.random.normal(size=n)
-    x_D_1 = np.random.normal(size=n)
+    x_D_bar_1 = np.random.uniform(-1, 1, size=n)
+    x_D_1 = np.random.uniform(-1, 1, size=n)
     true_mean_Y_bar = true_dgp.true_mean(1, 0, x_D_bar_1[:, None])
     true_mean_Y = true_dgp.true_mean(1, 1, x_D_1[:, None])
     Y_generated_bar = true_dgp.sample_conditional(1, 0, x_D_bar_1[:, None]).ravel()
@@ -56,8 +66,8 @@ def generate_scenario_I(n):
 
 # Scenario II
 def generate_scenario_II(n):
-    x_D_bar_1 = np.random.normal(size=n)
-    x_D_1 = np.random.normal(size=n)
+    x_D_bar_1 = np.random.uniform(-1, 1, size=n)
+    x_D_1 = np.random.uniform(-1, 1, size=n)
     true_mean_Y_bar = true_dgp.true_mean(2, 0, x_D_bar_1[:, None])
     true_mean_Y = true_dgp.true_mean(2, 1, x_D_1[:, None])
 
@@ -81,8 +91,8 @@ def generate_scenario_II(n):
 
 # Scenario III
 def generate_scenario_III(n):
-    x_D_bar_1 = np.random.normal(size=n)
-    x_D_1 = np.random.normal(size=n)
+    x_D_bar_1 = np.random.uniform(-1, 1, size=n)
+    x_D_1 = np.random.uniform(-1, 1, size=n)
     true_mean_Y_bar = true_dgp.true_mean(3, 0, x_D_bar_1[:, None])
     true_mean_Y = true_dgp.true_mean(3, 1, x_D_1[:, None])
     Y_generated_bar = true_dgp.sample_conditional(3, 0, x_D_bar_1[:, None]).ravel()
@@ -106,8 +116,8 @@ def generate_scenario_III(n):
 
 # Scenario IV
 def generate_scenario_IV(n):
-    x_D_bar_1 = np.random.normal(size=n)
-    x_D_1 = np.random.normal(size=n)
+    x_D_bar_1 = np.random.uniform(-1, 1, size=n)
+    x_D_1 = np.random.uniform(-1, 1, size=n)
     true_mean_Y_bar = true_dgp.true_mean(4, 0, x_D_bar_1[:, None])
     true_mean_Y = true_dgp.true_mean(4, 1, x_D_1[:, None])
     Y_generated_bar = true_dgp.sample_conditional(4, 0, x_D_bar_1[:, None]).ravel()
@@ -134,10 +144,10 @@ def generate_scenario_IV(n):
 
 # Scenario V
 def generate_scenario_V(n):
-    x_D_bar_1 = np.random.normal(size=n)
-    x_D_bar_2 = np.random.normal(size=n)
-    x_D_1 = np.random.normal(size=n)
-    x_D_2 = np.random.normal(size=n)
+    x_D_bar_1 = np.random.uniform(-1, 1, size=n)
+    x_D_bar_2 = np.random.uniform(-1, 1, size=n)
+    x_D_1 = np.random.uniform(-1, 1, size=n)
+    x_D_2 = np.random.uniform(-1, 1, size=n)
 
     true_mean_Y_bar = true_dgp.true_mean(5, 0, np.column_stack([x_D_bar_1, x_D_bar_2]))
     true_mean_Y = true_dgp.true_mean(5, 1, np.column_stack([x_D_1, x_D_2]))
@@ -164,10 +174,13 @@ def generate_scenario_V(n):
 
 # Scenario VI
 def generate_scenario_VI(n):
-    x_D_bar_1 = np.random.normal(size=n)
+    x_D_bar_1 = np.random.uniform(-1, 1, size=n)
+    # Kept as a binary switch (not U(-1,1)): the mean formula below uses x_D_bar_3 as
+    # an either/or interaction indicator between two regimes, not a continuous effect
+    # (see true_dgp.py / module docstring).
     x_D_bar_3 = np.random.binomial(1, 0.5, size=n)
-    x_D_1 = np.random.normal(size=n)
-    x_D_3 = np.random.normal(size=n)
+    x_D_1 = np.random.uniform(-1, 1, size=n)
+    x_D_3 = np.random.uniform(-1, 1, size=n)
 
     true_mean_Y_bar = true_dgp.true_mean(6, 0, np.column_stack([x_D_bar_1, x_D_bar_3]))
     true_mean_Y = true_dgp.true_mean(6, 1, np.column_stack([x_D_1, x_D_3]))
@@ -195,6 +208,9 @@ def generate_scenario_VI(n):
 
 # Scenario VII
 def generate_scenario_VII(n):
+    # Kept as U(0, 1) (not U(-1,1)): the mixture weight exp(-2x) below is only a valid
+    # probability for x >= 0 -- U(-1,1) would make it exceed 1 for negative x, silently
+    # forcing the mixture to always pick the skew-normal branch there (see true_dgp.py).
     x_D_bar_4 = np.random.uniform(0, 1, size=n)
     x_D_4 = np.random.uniform(0, 1, size=n)
 
@@ -223,15 +239,15 @@ def generate_scenario_VII(n):
 # Scenario VIII
 def generate_scenario_VIII(n):
     # Generate four continuous covariates for healthy and diseased groups
-    x_D_bar_5 = np.random.normal(size=n)
-    x_D_bar_6 = np.random.normal(size=n)
-    x_D_bar_7 = np.random.normal(size=n)
-    x_D_bar_8 = np.random.normal(size=n)
+    x_D_bar_5 = np.random.uniform(-1, 1, size=n)
+    x_D_bar_6 = np.random.uniform(-1, 1, size=n)
+    x_D_bar_7 = np.random.uniform(-1, 1, size=n)
+    x_D_bar_8 = np.random.uniform(-1, 1, size=n)
 
-    x_D_5 = np.random.normal(size=n)
-    x_D_6 = np.random.normal(size=n)
-    x_D_7 = np.random.normal(size=n)
-    x_D_8 = np.random.normal(size=n)
+    x_D_5 = np.random.uniform(-1, 1, size=n)
+    x_D_6 = np.random.uniform(-1, 1, size=n)
+    x_D_7 = np.random.uniform(-1, 1, size=n)
+    x_D_8 = np.random.uniform(-1, 1, size=n)
 
     # Outcome distributions remain the same as Scenario I
     true_mean_Y_bar = true_dgp.true_mean(8, 0, np.column_stack([x_D_bar_5, x_D_bar_6, x_D_bar_7, x_D_bar_8]))
