@@ -1,14 +1,19 @@
-"""Aggregates the per-scenario roc_mse_values.csv, timing.csv, and mean_std_mse.csv
-outputs of the simulation pipeline into summary statistics (mean/median/SD/quantiles of
-AUC MSE, of per-replicate fit time, and of the mean-/std-function estimation MSE), the
-basis for the finite-sample MSE and computation-time comparison across the nine scenarios
-reported in the paper's Supplementary Material (FNN vs. Random Forest vs. semiparametric
-benchmark; Reviewer 1, Major Concern 1).
+"""Aggregates the per-scenario roc_mse_values.csv, timing.csv, mean_std_mse.csv, and
+coverage.csv outputs of the simulation pipeline into summary statistics (mean/median/SD/
+quantiles of AUC MSE, of per-replicate fit time, of the mean-/std-function estimation MSE,
+and of pointwise bootstrap-OOB coverage), the basis for the finite-sample MSE and
+computation-time comparison across the nine scenarios reported in the paper's Supplementary
+Material (FNN vs. Random Forest vs. semiparametric benchmark; Reviewer 1, Major Concern 1).
 
 The "MSE SD Across Runs" column here (spread, across the 100 replicates, of the
 ROC-curve MSE) is a different quantity from the per-replicate "Std-Function MSE" in
 mean_std_mse_summary.csv (MSE of the sigma(x) estimator itself) -- named to avoid the
 "MSE Std" vs. "mse_std" collision flagged in Reviewer 1's Minor Concern 4.
+
+The coverage_summary.csv empirical coverage rate is the number Reviewer 2's Major Comment 4
+explicitly asks the simulation study to report ("the simulation study should report
+pointwise ... coverage"), computed from src/simulation/coverage_bootstrap_crossfit.py's
+per-row bootstrap+cross-fitting+OOB confidence intervals against the ground-truth AUC.
 """
 #%%
 import argparse
@@ -30,6 +35,7 @@ parser.add_argument("--root-dir", default="output", help="Directory containing o
 parser.add_argument("--output-csv", default="statistics_summary.csv", help="Path to write the MSE summary table")
 parser.add_argument("--timing-csv", default="timing_summary.csv", help="Path to write the per-scenario, per-method computation-time summary table")
 parser.add_argument("--mean-std-mse-csv", default="mean_std_mse_summary.csv", help="Path to write the per-scenario, per-method, per-group mean-/std-function MSE summary table")
+parser.add_argument("--coverage-csv", default="coverage_summary.csv", help="Path to write the per-scenario, per-method pointwise bootstrap-OOB coverage summary table")
 args = parser.parse_args()
 root_dir = args.root_dir
 
@@ -37,6 +43,7 @@ root_dir = args.root_dir
 results = []
 timing_rows = []
 mean_std_mse_rows = []
+coverage_rows = []
 
 # Loop through each folder in the root directory
 for folder in os.listdir(root_dir):
@@ -76,6 +83,10 @@ for folder in os.listdir(root_dir):
         mean_std_mse_file = os.path.join(folder_path, "mean_std_mse.csv")
         if os.path.exists(mean_std_mse_file):
             mean_std_mse_rows.append(pd.read_csv(mean_std_mse_file))
+
+        coverage_file = os.path.join(folder_path, "coverage.csv")
+        if os.path.exists(coverage_file):
+            coverage_rows.append(pd.read_csv(coverage_file))
 
 # Create a DataFrame from the results
 table = pd.DataFrame(results)
@@ -120,5 +131,31 @@ if mean_std_mse_rows:
     print(f"Table created and saved as {args.mean_std_mse_csv}")
 else:
     print("No mean_std_mse.csv files found; skipping mean/std-function MSE summary.")
+
+# Aggregate per-row pointwise coverage (one coverage.csv per replicate folder, one row
+# per subject) into a per-scenario, per-method empirical coverage rate -- the fraction of
+# (row, replicate) pairs whose bootstrap-OOB CI contains the ground-truth AUC, ideally
+# close to the nominal --ci-level used by coverage_bootstrap_crossfit.py (default 0.95).
+# "Covered" is NaN (excluded via the dropna below, not counted as "not covered") for rows
+# that didn't get enough OOB draws in a given replicate to form a CI.
+if coverage_rows:
+    all_coverage = pd.concat(coverage_rows, ignore_index=True)
+    all_coverage["Scenario ID"] = all_coverage["Scenario"].apply(_scenario_id)
+    all_coverage["CI Width"] = all_coverage["CI Upper"] - all_coverage["CI Lower"]
+
+    scored = all_coverage.dropna(subset=["Covered"])
+    coverage_summary = scored.groupby(["Scenario ID", "Method"]).agg(
+        **{
+            "Empirical Coverage Rate": ("Covered", "mean"),
+            "Mean CI Width": ("CI Width", "mean"),
+            "N Rows With CI": ("Covered", "count"),
+        }
+    ).reset_index()
+    n_total = all_coverage.groupby(["Scenario ID", "Method"]).size().rename("N Rows Total")
+    coverage_summary = coverage_summary.merge(n_total, on=["Scenario ID", "Method"])
+    coverage_summary.to_csv(args.coverage_csv, index=False)
+    print(f"Table created and saved as {args.coverage_csv}")
+else:
+    print("No coverage.csv files found; skipping coverage summary.")
 
 # %%

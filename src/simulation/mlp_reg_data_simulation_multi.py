@@ -810,6 +810,10 @@ if __name__ == "__main__":
         "early_stop_patience": args.early_stop_patience  # Número de épocas sin mejora para early stopping
     }
 
-main(config)
+    # Was previously at module level (unindented), which meant simply importing this
+    # module (e.g. to reuse MLP/train_model/compute_mean/compute_std elsewhere, as
+    # bootstrap_crossfit_oob.py now does) crashed immediately with NameError, since
+    # `config` only exists inside this __main__ guard.
+    main(config)
 
 #%%

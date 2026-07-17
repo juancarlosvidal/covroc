@@ -10,7 +10,7 @@ Code accompanying the paper:
 
 This repository implements and compares covariate-adjusted ROC (aROC/cROC) curve estimation methods for biomarker evaluation: a feedforward neural network (FNN) approach, a Random Forest regression approach, an NN-based cROC baseline, a naive (pooled, no covariate adjustment) ROC baseline, a linear-regression baseline, a semiparametric additive (spline) baseline, and the semiparametric `AROC.sp`/`cROC.sp` estimators from the R package [`ROCnReg`](https://cran.r-project.org/package=ROCnReg). It also includes a classification pipeline with temperature scaling used in the paper.
 
-**Method.** Both the FNN and Random Forest pipelines follow the paper's two-stage semiparametric approach (Methods, *Proposed framework: two-stage Semi-Parametric Neural Network Approach*): under a Gaussian location-scale model `Y | (X=x, D=d) ~ mu_d(x) + sigma_d(x) * eps`, a first regression stage estimates the conditional mean `mu_d(x)` for each group `d in {0,1}` (controls/cases), and a second stage estimates the conditional variance `sigma_d(x)^2` from the squared residuals of the first. The covariate-specific ROC curve is then obtained from `a(x) = (mu_1(x) - mu_0(x)) / sigma_1(x)` and `b(x) = sigma_0(x) / sigma_1(x)` via `aROC(p|x) = 1 - Phi(b(x) * Phi^-1(1-p) - a(x))`, with the AUC integrated numerically (`roc()` in `mlp_reg.py`/`mlp_reg_data_simulation_multi.py`/`rf_reg_data_simulation_multi_2.py`) using the empirical CDFs of the training residuals rather than assuming Gaussian errors. This code produces point estimates of the aROC/AUC surface; the subject-level bootstrap, cross-fitting, and out-of-bag aggregation used for the paper's confidence bands (Methods, *Uncertainty Quantification for Estimated ROC Curves*) are not included here, with the exception of the residual-bootstrap confidence intervals in the linear-regression baseline (`src/baselines/croc_linear_baseline.py`).
+**Method.** Both the FNN and Random Forest pipelines follow the paper's two-stage semiparametric approach (Methods, *Proposed framework: two-stage Semi-Parametric Neural Network Approach*): under a Gaussian location-scale model `Y | (X=x, D=d) ~ mu_d(x) + sigma_d(x) * eps`, a first regression stage estimates the conditional mean `mu_d(x)` for each group `d in {0,1}` (controls/cases), and a second stage estimates the conditional variance `sigma_d(x)^2` from the squared residuals of the first. The covariate-specific ROC curve is then obtained from `a(x) = (mu_1(x) - mu_0(x)) / sigma_1(x)` and `b(x) = sigma_0(x) / sigma_1(x)` via `aROC(p|x) = 1 - Phi(b(x) * Phi^-1(1-p) - a(x))`, with the AUC integrated numerically (`roc()` in `mlp_reg.py`/`mlp_reg_data_simulation_multi.py`/`rf_reg_data_simulation_multi_2.py`) using the empirical CDFs of the training residuals rather than assuming Gaussian errors. This code produces point estimates of the aROC/AUC surface; the subject-level bootstrap, cross-fitting, and out-of-bag aggregation used for the paper's confidence bands (Methods, *Uncertainty Quantification for Estimated ROC Curves*) are implemented on top of this same two-stage estimator in `src/simulation/bootstrap_crossfit_oob.py` (see below), plus the residual-bootstrap confidence intervals in the linear-regression baseline (`src/baselines/croc_linear_baseline.py`).
 
 **Ground-truth comparison in the simulation study.** Since the true data-generating process is known for each of the 9 simulation scenarios, `src/simulation/ground_truth_auc.py` computes the true population-level aROC(p|x)/AUC(x) (exact closed form for the 8 Gaussian scenarios, Monte Carlo for Scenario 7's skew-normal/Student-t mixture arm) and every method -- FNN, Random Forest, naive, linear, and semiparametric-additive -- is scored against it via per-subject MSE, plus per-replicate wall-clock fit time, both aggregated by `src/postprocessing/statistics_summary.py` into a single comparison table across methods and scenarios. The Bayesian nonparametric estimator (`ROCnReg::AROC.bnp`) is not included in this Python pipeline: it has no equivalent Python implementation (it's a Dirichlet-process-mixture model specific to that package's authors), and reimplementing it from scratch was judged out of scope; if needed, run it via `ROCnReg` in R and report at least its single-replicate computation time, as the associated review response allows.
 
@@ -20,7 +20,7 @@ This repository implements and compares covariate-adjusted ROC (aROC/cROC) curve
 
 **Case study.** The real-data experiments evaluate total activity count (TAC), a proxy for daily step count derived from NHANES 2011–2014 accelerometry (MIMS units), as a biomarker for all-cause mortality at 3-, 5-, and 8-year horizons, adjusted for age, sex, and BMI (`n = 5,006`; see Table 1 of the paper). The corresponding group/target variables in the real-data pipeline are named in Spanish: `tres` (3-year), `cinco` (5-year), and `ocho` (8-year) mortality status, plus `mortstat` for overall mortality; the biomarker column is `TAC`/`TAC2`. Variables derived from NHANES (`mortstat`, `RIDAGEYR`/Age, `BMI`, `Cancer`, `TAC`) are included under `data/`, including sex-stratified extracts `df_f.csv`/`df_m.csv` (female/male) used by `notebooks/nhanes_hetero_residuos.ipynb`.
 
-**Bootstrap + cross-fitting + OOB uncertainty quantification (Reviewer 2, Major Comment 4 -- partial).** `notebooks/nhanes_hetero_residuos.ipynb` implements, for the real-data NHANES case study, the subject-level bootstrap combined with group-aware cross-fitting and out-of-bag aggregation described in the paper's Methods (*Uncertainty Quantification for Estimated ROC Curves*), which was not otherwise implemented anywhere in this repository: for each bootstrap replicate it trains a heteroscedastic MLP (predicting both `mu(x)` and `sigma(x)`) per group with `K`-fold cross-fitting, pools out-of-fold standardized residuals, and Monte Carlo-simulates the covariate-specific AUC and its 95% CI from those residuals, aggregating only over-out-of-bag replicates per subject. Run from the repository root so `./data` and the `src/real_data` import resolve. This addresses the "clearer definitions and implementation details" part of Major Comment 4 for the real-data analysis; it does **not** address the reviewer's separate request that the **simulation study** report pointwise/simultaneous coverage, which needs the known ground truth in `src/simulation/` and is not yet implemented.
+**Bootstrap + cross-fitting + OOB uncertainty quantification (Reviewer 2, Major Comment 4).** `src/simulation/bootstrap_crossfit_oob.py` implements the subject-level bootstrap combined with group-aware `K`-fold cross-fitting and out-of-bag (OOB) aggregation described in the paper's Methods (*Uncertainty Quantification for Estimated ROC Curves*), on top of the **same two-stage mean/variance estimator** used everywhere else in this repository for the FNN point estimates (`mlp_reg_data_simulation_multi.py`'s `MLP`/`train_model`/`compute_mean`/`compute_std`/`compute_residues`) rather than a separately-trained joint-likelihood heteroscedastic network -- so the confidence bands quantify uncertainty in the same estimator whose point estimates are reported in Table 1 and Figures 2-18. Within each bootstrap replicate, each cross-fitting fold's mean and variance models are trained only on that fold's train partition, and standardized residuals are collected only from the held-out validation rows, fixing the in-sample residual-variance bias Reviewer 2's Major Comment 3 raises. Two entry points share this engine: `bootstrap_crossfit_oob_shared`, used by `notebooks/nhanes_hetero_residuos.ipynb` for the real-data NHANES case study (one dataset split into two groups, evaluated at a shared covariate profile `x`, run from the repository root so `./data`, `src/real_data`, and `src/simulation` imports resolve); and `bootstrap_crossfit_oob_paired`, used by `src/simulation/coverage_bootstrap_crossfit.py` for the 9 simulation scenarios (two independently-drawn covariate pools, evaluated row-paired against `src/simulation/ground_truth_auc.py`'s known ground-truth AUC). The latter writes a per-subject `coverage.csv` (true AUC, estimated AUC mean/95% CI, `covered` boolean, OOB sample count), which `statistics_summary.py` aggregates into `coverage_summary.csv` -- the empirical pointwise coverage rate Major Comment 4 explicitly asks the simulation study to report. Scope of this pass: **pointwise** coverage only (not simultaneous/uniform bands) and **FNN** only (not Random Forest), matching the notebook's original real-data scope. Since the confidence bands and every other reported result now use the same two-stage procedure, the recommended fix for Major Comment 3's other half (the main text describing a "joint Gaussian likelihood" while the Supplementary Material's Algorithm 1 describes two separate models) is to correct the main text to describe the two-stage procedure as authoritative, rather than switching the paper to a joint-likelihood model.
 
 ## Repository structure
 
@@ -43,6 +43,11 @@ src/
     naive_roc_baseline.py          naive/pooled ROC baseline (no covariate adjustment) vs. ground truth
     linear_reg_data_simulation.py  linear and semiparametric-additive (spline) aROC baselines vs. ground
                                    truth, reusing cROC_sp from src/baselines/croc_linear_baseline.py
+    bootstrap_crossfit_oob.py      shared bootstrap + K-fold cross-fitting + OOB confidence-interval
+                                   engine (two-stage estimator), used by the notebook below and by
+                                   coverage_bootstrap_crossfit.py
+    coverage_bootstrap_crossfit.py pointwise bootstrap-OOB coverage of the FNN two-stage estimator
+                                   against the ground-truth AUC, per simulation scenario replicate
   real_data/              Regression pipeline on real (NHANES-derived) data
     data_reg_real.py              dataset loader; TAC/TAC2 biomarker, age/BMI/sex covariates
     mlp_reg.py                    two-stage FNN pipeline producing the age x BMI AUC surfaces
@@ -58,7 +63,8 @@ src/
                                     linear_reg_data_simulation.py, for the simulation-scenario baselines
   postprocessing/
     convert_to_wide.py             reshape simulation output to wide form
-    statistics_summary.py          aggregate MSE, timing, and mean-/std-function MSE statistics across output folders
+    statistics_summary.py          aggregate MSE, timing, mean-/std-function MSE, and pointwise
+                                   bootstrap-OOB coverage statistics across output folders
     mean_std_mse_boxplots.py       per-scenario Mean-/Std-Function MSE boxplots, methods compared side by side
     write_latex_table.py           helper to build LaTeX tables from results
 R/
@@ -67,7 +73,8 @@ R/
   aroc_single_model.R       single AROC.sp model + NHANES data prep + batch AROC/cROC runs
 notebooks/
   nhanes_hetero_residuos.ipynb  subject-level bootstrap + cross-fitting + OOB confidence intervals
-                                 for the NHANES case study (see note below)
+                                 for the NHANES case study (uses src/simulation/bootstrap_crossfit_oob.py;
+                                 see note below)
 hpc/
   py_gen.sh, py_mlp.sh, py_rfo.sh    SLURM job scripts (submitted via sbatch)
   run_gen.sh, run_mlp.sh, run_rfo.sh convenience wrappers around sbatch
@@ -123,6 +130,12 @@ Repeat for `scenario_1` .. `scenario_9`. On a SLURM cluster, use the wrappers in
 ./hpc/run_rfo.sh ./input_real_2/scenario_1 ./output_real/scenario_1
 ```
 
+**2b. Pointwise bootstrap-OOB coverage** of the FNN two-stage estimator against the ground-truth AUC, per scenario folder (Reviewer 2, Major Comment 4; each cross-fitting fold trains its own mean/variance model pair, so this is far more compute-heavy than step 2 -- `-b`/`-k` control how many bootstrap replicates/cross-fitting folds, `min_samples=6` OOB draws per subject are needed before a CI is reported, so `-b` needs to be large enough that most subjects clear that bar):
+```bash
+python src/simulation/coverage_bootstrap_crossfit.py -i input_real_2/scenario_1 -o output_coverage/scenario_1 -b 100 -k 5 -e 800
+```
+Writes `coverage.csv`/`timing.csv` per replicate folder, aggregated by `statistics_summary.py` in step 7.
+
 **3. Real-data regression** (see `python src/real_data/mlp_reg.py -h` for its `-i`/`-o` and hyperparameter flags, which follow the same pattern as step 2):
 ```bash
 python src/real_data/mlp_reg.py -i <input_dir> -o <output_file>
@@ -146,15 +159,15 @@ Rscript R/aroc_batch_scenarios.R
 Rscript R/aroc_single_model.R
 ```
 
-**7. Post-processing.** `statistics_summary.py` aggregates every replicate folder under `--root-dir` into `roc_mse_values.csv`-based MSE statistics, (from each folder's `timing.csv`) a `timing_summary.csv` of per-scenario, per-method fit time, and (from each folder's `mean_std_mse.csv`, written only by the FNN/RF scripts) a `mean_std_mse_summary.csv` -- e.g. point it at a directory containing one differently-prefixed copy per method (`fnn_scenario_1_.../`, `rf_scenario_1_.../`, `naive_scenario_1_.../`, ...) to get a single FNN-vs-RF-vs-naive-vs-linear-vs-spline comparison table. `mean_std_mse_boxplots.py` then plots the FNN-vs-RF Mean-/Std-Function MSE comparison per scenario:
+**7. Post-processing.** `statistics_summary.py` aggregates every replicate folder under `--root-dir` into `roc_mse_values.csv`-based MSE statistics, (from each folder's `timing.csv`) a `timing_summary.csv` of per-scenario, per-method fit time, (from each folder's `mean_std_mse.csv`, written only by the FNN/RF scripts) a `mean_std_mse_summary.csv`, and (from each folder's `coverage.csv`, written only by `coverage_bootstrap_crossfit.py`) a `coverage_summary.csv` of per-scenario, per-method empirical pointwise coverage rate -- e.g. point it at a directory containing one differently-prefixed copy per method (`fnn_scenario_1_.../`, `rf_scenario_1_.../`, `naive_scenario_1_.../`, ...) to get a single FNN-vs-RF-vs-naive-vs-linear-vs-spline comparison table. `mean_std_mse_boxplots.py` then plots the FNN-vs-RF Mean-/Std-Function MSE comparison per scenario:
 ```bash
 python src/postprocessing/convert_to_wide.py
-python src/postprocessing/statistics_summary.py --root-dir output --output-csv statistics_summary.csv --timing-csv timing_summary.csv --mean-std-mse-csv mean_std_mse_summary.csv
+python src/postprocessing/statistics_summary.py --root-dir output --output-csv statistics_summary.csv --timing-csv timing_summary.csv --mean-std-mse-csv mean_std_mse_summary.csv --coverage-csv coverage_summary.csv
 python src/postprocessing/mean_std_mse_boxplots.py --root-dir output --output-dir output/mean_std_mse_boxplots
 python src/postprocessing/write_latex_table.py
 ```
 
-**8. Uncertainty quantification for the real-data case study** (bootstrap + cross-fitting + OOB, per group/mortality-horizon; writes per-subject AUC + 95% CI CSVs and smoothed AUC-vs-age plots under `./output`, git-ignored):
+**8. Uncertainty quantification for the real-data case study** (bootstrap + cross-fitting + OOB using the same two-stage estimator as the rest of the pipeline, via `bootstrap_crossfit_oob_shared`, per group/mortality-horizon; writes per-subject AUC + 95% CI CSVs and smoothed AUC-vs-age plots under `./output`, git-ignored):
 ```bash
 jupyter notebook notebooks/nhanes_hetero_residuos.ipynb
 ```
