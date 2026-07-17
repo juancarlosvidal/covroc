@@ -233,6 +233,9 @@ __marimo__/
 *.Rout
 *.rda
 
+# macOS
+.DS_Store
+
 # Claude Code local session state
 .claude/
 

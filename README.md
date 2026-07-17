@@ -18,7 +18,9 @@ This repository implements and compares covariate-adjusted ROC (aROC/cROC) curve
 
 **Simulation scenario corrections (Reviewer 1, Minor Concern 1).** Per the Supplementary Material, covariates are `U(-1, 1)` in every scenario; the code previously drew most of them from `Normal(0, 1)` (Scenarios I-VI, VIII) or `U(0, 1)` (Scenario VII) instead -- now fixed in `data_generation.py`, with two deliberate, documented exceptions: Scenario VI's third covariate stays `Bernoulli(0.5)` (it's used as a 0/1 interaction switch, not a continuous effect) and Scenario VII's covariate stays `U(0, 1)` (its mixture weight `exp(-2x)` is only a valid probability for `x >= 0`). Separately, Scenario III's own formula in the Supplementary Material -- titled "Covariate Effect on Both Mean and Variance" -- actually has constant variance, identical in structure to Scenario II; there was no existing spec to fix it against, so `true_dgp.py` now defines a new, explicitly-designed `sigma(x) = base * exp(0.3*x)` for that scenario only. **Both changes alter the generated data**, so Table 1 and Figures 10-18 in the Supplementary Material are stale until the full 9-scenario x 2-sample-size x 100-replicate sweep (`hpc/py_gen.sh` then the training scripts) is rerun.
 
-**Case study.** The real-data experiments evaluate total activity count (TAC), a proxy for daily step count derived from NHANES 2011–2014 accelerometry (MIMS units), as a biomarker for all-cause mortality at 3-, 5-, and 8-year horizons, adjusted for age, sex, and BMI (`n = 5,006`; see Table 1 of the paper). The corresponding group/target variables in the real-data pipeline are named in Spanish: `tres` (3-year), `cinco` (5-year), and `ocho` (8-year) mortality status, plus `mortstat` for overall mortality; the biomarker column is `TAC`/`TAC2`. Variables derived from NHANES (`mortstat`, `RIDAGEYR`/Age, `BMI`, `Cancer`, `TAC`) are included under `data/`.
+**Case study.** The real-data experiments evaluate total activity count (TAC), a proxy for daily step count derived from NHANES 2011–2014 accelerometry (MIMS units), as a biomarker for all-cause mortality at 3-, 5-, and 8-year horizons, adjusted for age, sex, and BMI (`n = 5,006`; see Table 1 of the paper). The corresponding group/target variables in the real-data pipeline are named in Spanish: `tres` (3-year), `cinco` (5-year), and `ocho` (8-year) mortality status, plus `mortstat` for overall mortality; the biomarker column is `TAC`/`TAC2`. Variables derived from NHANES (`mortstat`, `RIDAGEYR`/Age, `BMI`, `Cancer`, `TAC`) are included under `data/`, including sex-stratified extracts `df_f.csv`/`df_m.csv` (female/male) used by `notebooks/nhanes_hetero_residuos.ipynb`.
+
+**Bootstrap + cross-fitting + OOB uncertainty quantification (Reviewer 2, Major Comment 4 -- partial).** `notebooks/nhanes_hetero_residuos.ipynb` implements, for the real-data NHANES case study, the subject-level bootstrap combined with group-aware cross-fitting and out-of-bag aggregation described in the paper's Methods (*Uncertainty Quantification for Estimated ROC Curves*), which was not otherwise implemented anywhere in this repository: for each bootstrap replicate it trains a heteroscedastic MLP (predicting both `mu(x)` and `sigma(x)`) per group with `K`-fold cross-fitting, pools out-of-fold standardized residuals, and Monte Carlo-simulates the covariate-specific AUC and its 95% CI from those residuals, aggregating only over-out-of-bag replicates per subject. Run from the repository root so `./data` and the `src/real_data` import resolve. This addresses the "clearer definitions and implementation details" part of Major Comment 4 for the real-data analysis; it does **not** address the reviewer's separate request that the **simulation study** report pointwise/simultaneous coverage, which needs the known ground truth in `src/simulation/` and is not yet implemented.
 
 ## Repository structure
 
@@ -63,6 +65,9 @@ R/
   aroc_batch_scenarios.R    AROC.sp/cROC.sp over all scenario CSVs in input_real_2/, incl. 3D surface plots
   aroc_crude_vs_adjusted.R  crude vs. confounder-adjusted ROC comparison
   aroc_single_model.R       single AROC.sp model + NHANES data prep + batch AROC/cROC runs
+notebooks/
+  nhanes_hetero_residuos.ipynb  subject-level bootstrap + cross-fitting + OOB confidence intervals
+                                 for the NHANES case study (see note below)
 hpc/
   py_gen.sh, py_mlp.sh, py_rfo.sh    SLURM job scripts (submitted via sbatch)
   run_gen.sh, run_mlp.sh, run_rfo.sh convenience wrappers around sbatch
@@ -147,6 +152,11 @@ python src/postprocessing/convert_to_wide.py
 python src/postprocessing/statistics_summary.py --root-dir output --output-csv statistics_summary.csv --timing-csv timing_summary.csv --mean-std-mse-csv mean_std_mse_summary.csv
 python src/postprocessing/mean_std_mse_boxplots.py --root-dir output --output-dir output/mean_std_mse_boxplots
 python src/postprocessing/write_latex_table.py
+```
+
+**8. Uncertainty quantification for the real-data case study** (bootstrap + cross-fitting + OOB, per group/mortality-horizon; writes per-subject AUC + 95% CI CSVs and smoothed AUC-vs-age plots under `./output`, git-ignored):
+```bash
+jupyter notebook notebooks/nhanes_hetero_residuos.ipynb
 ```
 
 ## Notes
