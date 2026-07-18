@@ -34,10 +34,6 @@ import os
 
 import true_dgp
 
-# Create directory if it doesn't exist
-os.makedirs("data_simulation", exist_ok=True)
-
-
 
 # Scenario I
 

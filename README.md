@@ -62,7 +62,6 @@ src/
                                     (its own __main__ block) and, via src/simulation/
                                     linear_reg_data_simulation.py, for the simulation-scenario baselines
   postprocessing/
-    convert_to_wide.py             reshape simulation output to wide form
     statistics_summary.py          aggregate MSE, timing, mean-/std-function MSE, and pointwise
                                    bootstrap-OOB coverage statistics across output folders
     mean_std_mse_boxplots.py       per-scenario Mean-/Std-Function MSE boxplots, methods compared side by side
@@ -109,7 +108,7 @@ install.packages(c("ROCnReg", "plotly", "htmlwidgets", "webshot2", "dplyr"))
 
 All commands below are run from the repository root.
 
-**1. Generate simulated data** (writes to `data_simulation/` and `input_real_2/`):
+**1. Generate simulated data** (writes to `input_real_2/`, already in the wide, `mortstat`-labeled form the regression loaders expect):
 ```bash
 python src/simulation/data_generation.py
 ```
@@ -161,7 +160,6 @@ Rscript R/aroc_single_model.R
 
 **7. Post-processing.** `statistics_summary.py` aggregates every replicate folder under `--root-dir` into `roc_mse_values.csv`-based MSE statistics, (from each folder's `timing.csv`) a `timing_summary.csv` of per-scenario, per-method fit time, (from each folder's `mean_std_mse.csv`, written only by the FNN/RF scripts) a `mean_std_mse_summary.csv`, and (from each folder's `coverage.csv`, written only by `coverage_bootstrap_crossfit.py`) a `coverage_summary.csv` of per-scenario, per-method empirical pointwise coverage rate -- e.g. point it at a directory containing one differently-prefixed copy per method (`fnn_scenario_1_.../`, `rf_scenario_1_.../`, `naive_scenario_1_.../`, ...) to get a single FNN-vs-RF-vs-naive-vs-linear-vs-spline comparison table. `mean_std_mse_boxplots.py` then plots the FNN-vs-RF Mean-/Std-Function MSE comparison per scenario:
 ```bash
-python src/postprocessing/convert_to_wide.py
 python src/postprocessing/statistics_summary.py --root-dir output --output-csv statistics_summary.csv --timing-csv timing_summary.csv --mean-std-mse-csv mean_std_mse_summary.csv --coverage-csv coverage_summary.csv
 python src/postprocessing/mean_std_mse_boxplots.py --root-dir output --output-dir output/mean_std_mse_boxplots
 python src/postprocessing/write_latex_table.py
@@ -175,5 +173,5 @@ jupyter notebook notebooks/nhanes_hetero_residuos.ipynb
 ## Notes
 
 - The `R/` scripts originally used hardcoded local paths; they now assume they're run from the repository root. `aroc_single_model.R` also references a `data_analysis_TD_2003_19.rda` file that is not included in this repository.
-- Directories produced at runtime (`data_simulation/`, `input_real_2/`, `output/`, `output_real/`, etc.) are git-ignored.
+- Directories produced at runtime (`input_real_2/`, `output/`, `output_real/`, etc.) are git-ignored.
 - `archive/` contains earlier/superseded versions of scripts, kept for reference only — see `archive/README.md`.

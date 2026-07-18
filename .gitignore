@@ -218,8 +218,8 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Project-generated data/output directories (produced by the scripts in src/ and hpc/)
-/data_simulation/
-/data_simulation_wide/
+/data_simulation/          # only written by the archived archive/data_simulation.py, not the active pipeline
+/data_simulation_wide/     # only written by the archived archive/convert_to_wide.py, not the active pipeline
 /input_sim/
 /input_real/
 /input_real_2/
