@@ -106,15 +106,36 @@ def _fit_group_bootstrap(X_pool, Y_pool, W_pool, X_eval, mlp_config, K, device, 
     return mu_accum, sigma_accum, np.concatenate(std_resid_pool)
 
 
-def compute_empirical_auc(mu0, mu1, s0, s1, eps0, eps1, n_mc=500):
+def compute_empirical_auc(mu0, mu1, s0, s1, eps0, eps1, n_mc=500, adaptive_direction=False):
     """P(T_control > T_case | x) via Monte Carlo over pooled empirical residuals --
     same construction as the paper's Methods (Semi-Parametric Monte Carlo Estimation of
-    the Conditional AUC), applied here to the cross-fitted mu/sigma/residuals above."""
+    the Conditional AUC), applied here to the cross-fitted mu/sigma/residuals above.
+
+    adaptive_direction=False (default, real-data/bootstrap_crossfit_oob_shared) always
+    reports P(T0 > T1), matching the original notebook's fixed "P(Control > Case)"
+    convention for that dataset.
+
+    adaptive_direction=True (bootstrap_crossfit_oob_paired) instead reports, per row,
+    P(higher-mean group's draw > lower-mean group's draw) -- i.e. flips to P(T1 > T0)
+    wherever mu1 > mu0. This is required to match ground_truth_auc.true_auc's own
+    direction convention (via true_dgp/_ab_from_means_stds' `higher_is_1` branching,
+    the same adaptive logic mlp_reg_data_simulation_multi.py's own a_predicted/
+    b_predicted already use for the point estimates), since which group has the higher
+    mean is not fixed across the 9 scenarios -- e.g. Scenario IV's healthy/diseased
+    means actually cross over within the covariate range. Without this, comparing a
+    fixed-direction P(T0 > T1) against the ground truth's adaptive AUC amounts to
+    comparing against 1 - true_AUC whenever mu1 > mu0, which silently collapses
+    pointwise coverage towards 0% for any scenario with real separation.
+    """
     e0_samp = np.random.choice(eps0, size=n_mc, replace=True)
     e1_samp = np.random.choice(eps1, size=n_mc, replace=True)
     T0_sim = mu0[:, None] + s0[:, None] * e0_samp[None, :]
     T1_sim = mu1[:, None] + s1[:, None] * e1_samp[None, :]
-    wins = (T0_sim > T1_sim).astype(np.float32)
+    if adaptive_direction:
+        higher_is_1 = (mu1 > mu0)[:, None]
+        wins = np.where(higher_is_1, T1_sim > T0_sim, T0_sim > T1_sim).astype(np.float32)
+    else:
+        wins = (T0_sim > T1_sim).astype(np.float32)
     return wins.mean(axis=1)
 
 
@@ -191,7 +212,11 @@ def bootstrap_crossfit_oob_paired(X0, Y0, W0, X1, Y1, W1, mlp_config, B, K, devi
         mu0, sigma0, eps0 = _fit_group_bootstrap(X0[sel0], Y0[sel0], W0[sel0], X0, mlp_config, K, device)
         mu1, sigma1, eps1 = _fit_group_bootstrap(X1[sel1], Y1[sel1], W1[sel1], X1, mlp_config, K, device)
 
-        auc_all = compute_empirical_auc(mu0, mu1, sigma0, sigma1, eps0, eps1, n_mc=n_mc)
+        # adaptive_direction=True: match ground_truth_auc.true_auc's per-row "higher-mean
+        # group vs. the other" convention (see compute_empirical_auc's docstring) -- fixes
+        # pointwise coverage silently collapsing towards 0% for scenarios with real
+        # separation between groups.
+        auc_all = compute_empirical_auc(mu0, mu1, sigma0, sigma1, eps0, eps1, n_mc=n_mc, adaptive_direction=True)
 
         used0 = set(sel0.tolist())
         used1 = set(sel1.tolist())

@@ -93,7 +93,12 @@ table = pd.DataFrame(results)
 # Save the table to a CSV file
 table.to_csv(args.output_csv, index=False)
 
-print(f"Table created and saved as {args.output_csv}")
+if results:
+    print(f"Table created and saved as {args.output_csv}")
+else:
+    print(f"No roc_mse_values.csv files found under {root_dir}; wrote an empty {args.output_csv} "
+          f"-- check --root-dir points at the folder containing the replicate subfolders "
+          f"(not, e.g., the repository root).")
 
 def _scenario_id(scenario):
     match = re.match(r"^(scenario_\d+)_", scenario)

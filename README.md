@@ -65,7 +65,8 @@ src/
     statistics_summary.py          aggregate MSE, timing, mean-/std-function MSE, and pointwise
                                    bootstrap-OOB coverage statistics across output folders
     mean_std_mse_boxplots.py       per-scenario Mean-/Std-Function MSE boxplots, methods compared side by side
-    write_latex_table.py           helper to build LaTeX tables from results
+    write_latex_table.py           per-scenario, per-method ROC-MSE comparison table (.tex/.dat)
+                                   from statistics_summary.csv
 R/
   aroc_batch_scenarios.R    AROC.sp/cROC.sp over all scenario CSVs in input_real_2/, incl. 3D surface plots
   aroc_crude_vs_adjusted.R  crude vs. confounder-adjusted ROC comparison
@@ -75,8 +76,16 @@ notebooks/
                                  for the NHANES case study (uses src/simulation/bootstrap_crossfit_oob.py;
                                  see note below)
 hpc/
-  py_gen.sh, py_mlp.sh, py_rfo.sh    SLURM job scripts (submitted via sbatch)
-  run_gen.sh, run_mlp.sh, run_rfo.sh convenience wrappers around sbatch
+  py_gen.sh, py_mlp.sh, py_rfo.sh, py_cov.sh, py_post.sh    SLURM job scripts (submitted via sbatch;
+                                                             py_post.sh is CPU-only, no --gres=gpu)
+  py_cov_array.sh              SLURM array version of py_cov.sh -- one replicate per array task,
+                               so coverage_bootstrap_crossfit.py's replicates run concurrently
+                               across GPUs instead of sequentially in a single job; use this, not
+                               py_cov.sh, for a real per-scenario coverage sweep
+  run_gen.sh, run_mlp.sh, run_rfo.sh, run_cov.sh, run_cov_array.sh, run_post.sh
+                               convenience wrappers around sbatch
+  combine_outputs.sh          symlinks each method's per-replicate folders into one method-prefixed
+                              root for cross-method aggregation (no sbatch needed, just file I/O)
 archive/
   superseded prototypes and early drafts, kept for reference (see archive/README.md)
 ```
@@ -129,11 +138,18 @@ Repeat for `scenario_1` .. `scenario_9`. On a SLURM cluster, use the wrappers in
 ./hpc/run_rfo.sh ./input_real_2/scenario_1 ./output_real/scenario_1
 ```
 
-**2b. Pointwise bootstrap-OOB coverage** of the FNN two-stage estimator against the ground-truth AUC, per scenario folder (Reviewer 2, Major Comment 4; each cross-fitting fold trains its own mean/variance model pair, so this is far more compute-heavy than step 2 -- `-b`/`-k` control how many bootstrap replicates/cross-fitting folds, `min_samples=6` OOB draws per subject are needed before a CI is reported, so `-b` needs to be large enough that most subjects clear that bar):
+**2b. Pointwise bootstrap-OOB coverage** of the FNN two-stage estimator against the ground-truth AUC, per scenario folder (Reviewer 2, Major Comment 4; each cross-fitting fold trains its own mean/variance model pair, so this is far more compute-heavy than step 2 -- `-b`/`-k` control how many bootstrap replicates/cross-fitting folds, `min_samples=6` OOB draws per subject are needed before a CI is reported, so `-b` needs to be large enough that most subjects clear that bar). **Measured cost at `-b 150 -k 5 -e 800`: ~2.45h/replicate at n=5000, ~9.1h/replicate at n=20000** -- and `coverage_bootstrap_crossfit.py` processes every file in `-i` sequentially in one GPU allocation, so pointing it at a full 100-replicate scenario folder means one GPU grinding through it for weeks, not an oversight to just "let run longer". Coverage doesn't need 100 replicates -- each one already contributes thousands of rows, so a much smaller subset (e.g. 15, n=5000 only) still gives a stable per-scenario coverage rate:
 ```bash
-python src/simulation/coverage_bootstrap_crossfit.py -i input_real_2/scenario_1 -o output_coverage/scenario_1 -b 100 -k 5 -e 800
+python src/simulation/coverage_bootstrap_crossfit.py -i input_real_2/scenario_1 -o output/coverage/scenario_1 -b 150 -k 5 -e 800
 ```
-Writes `coverage.csv`/`timing.csv` per replicate folder, aggregated by `statistics_summary.py` in step 7.
+(run against a folder holding only the replicate CSVs you actually want processed, not the full 100 -- e.g. copy/symlink a subset into its own directory first).
+
+On a SLURM cluster, **use the array form**, `hpc/py_cov_array.sh`/`run_cov_array.sh`, not `py_cov.sh`/`run_cov.sh`: it runs one replicate per array task (so replicates train concurrently across GPUs instead of queued one after another in a single job), automatically restricts to `*_5000_*` files, and skips replicates that already have a `coverage.csv` (safe to re-run/extend):
+```bash
+./hpc/run_cov_array.sh input_real_2/scenario_1 output/coverage/scenario_1        # first 15 n=5000 replicates
+./hpc/run_cov_array.sh input_real_2/scenario_1 output/coverage/scenario_1 15 5   # same, capped at 5 concurrent tasks
+```
+Repeat per scenario. Writes `coverage.csv`/`timing.csv` per replicate folder, aggregated by `statistics_summary.py` in step 7b. `py_cov.sh`/`run_cov.sh` (whole-folder, single job) still exist for ad hoc runs against a small, already-curated input folder -- not for a full scenario sweep.
 
 **3. Real-data regression** (see `python src/real_data/mlp_reg.py -h` for its `-i`/`-o` and hyperparameter flags, which follow the same pattern as step 2):
 ```bash
@@ -158,12 +174,23 @@ Rscript R/aroc_batch_scenarios.R
 Rscript R/aroc_single_model.R
 ```
 
-**7. Post-processing.** `statistics_summary.py` aggregates every replicate folder under `--root-dir` into `roc_mse_values.csv`-based MSE statistics, (from each folder's `timing.csv`) a `timing_summary.csv` of per-scenario, per-method fit time, (from each folder's `mean_std_mse.csv`, written only by the FNN/RF scripts) a `mean_std_mse_summary.csv`, and (from each folder's `coverage.csv`, written only by `coverage_bootstrap_crossfit.py`) a `coverage_summary.csv` of per-scenario, per-method empirical pointwise coverage rate -- e.g. point it at a directory containing one differently-prefixed copy per method (`fnn_scenario_1_.../`, `rf_scenario_1_.../`, `naive_scenario_1_.../`, ...) to get a single FNN-vs-RF-vs-naive-vs-linear-vs-spline comparison table. `mean_std_mse_boxplots.py` then plots the FNN-vs-RF Mean-/Std-Function MSE comparison per scenario:
+**7a. Combine each method's output into one root.** Steps 2/2b run each method into its own `-o` (e.g. `output/fnn/scenario_1`, `output/rf/scenario_1`, `output/coverage/scenario_1`, ...), since sharing one `-o` across methods collides replicate-folder names. `statistics_summary.py`/`mean_std_mse_boxplots.py`/`write_latex_table.py` (7b below) instead expect one root containing all of them together, one method-prefixed copy per replicate folder (`fnn_scenario_1_5000_1/`, `rf_scenario_1_5000_1/`, ...). `hpc/combine_outputs.sh` builds that root via symlinks (instant, no data duplication -- safe to run directly, no `sbatch` needed):
 ```bash
-python src/postprocessing/statistics_summary.py --root-dir output --output-csv statistics_summary.csv --timing-csv timing_summary.csv --mean-std-mse-csv mean_std_mse_summary.csv --coverage-csv coverage_summary.csv
-python src/postprocessing/mean_std_mse_boxplots.py --root-dir output --output-dir output/mean_std_mse_boxplots
-python src/postprocessing/write_latex_table.py
+./hpc/combine_outputs.sh output output/combined fnn rf coverage
 ```
+(list whichever method subfolders you actually have under `output/` -- e.g. add `naive linear spline` once those are run too).
+
+**7b. Post-processing.** `statistics_summary.py` aggregates every replicate folder under `--root-dir` into `roc_mse_values.csv`-based MSE statistics, (from each folder's `timing.csv`) a `timing_summary.csv` of per-scenario, per-method fit time, (from each folder's `mean_std_mse.csv`, written only by the FNN/RF scripts) a `mean_std_mse_summary.csv`, and (from each folder's `coverage.csv`, written only by `coverage_bootstrap_crossfit.py`) a `coverage_summary.csv` of per-scenario, per-method empirical pointwise coverage rate. `mean_std_mse_boxplots.py` then plots the FNN-vs-RF Mean-/Std-Function MSE comparison per scenario (one PNG per scenario/sample-size, ~18 total for the full 9-scenario x 2-sample-size sweep), and `write_latex_table.py` turns `statistics_summary.csv`'s per-replicate rows -- parsing the method out of each `<method>_scenario_<N>_<n>_<replicate>` folder name -- into a per-scenario, per-method `summary_table_mse.tex`/`.dat` (mean ROC-curve MSE and its across-replicate SD):
+```bash
+python src/postprocessing/statistics_summary.py --root-dir output/combined --output-csv output/combined/statistics_summary.csv --timing-csv output/combined/timing_summary.csv --mean-std-mse-csv output/combined/mean_std_mse_summary.csv --coverage-csv output/combined/coverage_summary.csv
+python src/postprocessing/mean_std_mse_boxplots.py --root-dir output/combined --output-dir output/combined/mean_std_mse_boxplots
+python src/postprocessing/write_latex_table.py --stats-csv output/combined/statistics_summary.csv --tex-output output/combined/summary_table_mse.tex --dat-output output/combined/summary_table_mse.dat
+```
+This step is pure pandas/matplotlib aggregation over already-produced CSVs -- no GPU, and much lighter than steps 2/2b/3 (seconds to low minutes even at full scale). On a SLURM cluster where the login node isn't meant for even light processing, `hpc/py_post.sh` runs it as a small CPU-only job (no `--gres=gpu`, so it doesn't queue behind GPU jobs for no reason) -- pass it the *combined* directory from 7a, not `.`, since `run_post.sh` (like the other `run_*.sh` wrappers) always resolves its argument relative to the repository root, not to whatever directory your shell happens to be in when you invoke it:
+```bash
+./hpc/run_post.sh output/combined
+```
+(writes the three summary CSVs, the boxplots, and `summary_table_mse.tex`/`.dat` under the given root dir).
 
 **8. Uncertainty quantification for the real-data case study** (bootstrap + cross-fitting + OOB using the same two-stage estimator as the rest of the pipeline, via `bootstrap_crossfit_oob_shared`, per group/mortality-horizon; writes per-subject AUC + 95% CI CSVs and smoothed AUC-vs-age plots under `./output`, git-ignored):
 ```bash
