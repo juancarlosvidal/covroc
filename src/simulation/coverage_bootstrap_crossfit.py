@@ -96,7 +96,7 @@ def main(config):
 
         coverage_df = pd.DataFrame({
             "Scenario": sceminario,
-            "Method": "FNN",
+            "Method": "FNN-Coverage",
             "Row Index": np.arange(len(true_auc_vals)),
             "True AUC": true_auc_vals,
             "Estimated AUC Mean": auc_mean,
@@ -112,7 +112,7 @@ def main(config):
 
         timing_df = pd.DataFrame([{
             "Scenario": sceminario,
-            "Method": "FNN",
+            "Method": "FNN-Coverage",
             "Fit Seconds Total": fit_seconds_total,
         }])
         timing_df.to_csv(f"{op}/timing.csv", index=False)
