@@ -99,9 +99,21 @@ def true_roc_curve(scenario, X0, X1, p=DEFAULT_P_GRID, n_mc=DEFAULT_N_MC, rng=No
     n = X0.shape[0]
 
     if scenario == 7:
-        y0 = true_dgp.sample_conditional(scenario, 0, X0, n_mc=n_mc, rng=rng)
-        y1 = true_dgp.sample_conditional(scenario, 1, X1, n_mc=n_mc, rng=rng)
-        return _roc_from_samples_batch(y0, y1, p)
+        # Chunked over rows: materializing all n subjects' (n_mc,) MC draws at once (e.g.
+        # 20000 x 20000 float64 = ~3.2GB per array, several such arrays alive at once
+        # between sample_conditional's output and _roc_from_samples_batch's sorted
+        # copies) was observed to OOM-kill an n=20000, --mem=16G job. A few thousand
+        # subjects at a time keeps peak memory to a few hundred MB while keeping almost
+        # all of the vectorized speedup (only the outer loop over chunks is Python-level,
+        # not one iteration per subject).
+        chunk_size = 2000
+        chunks = []
+        for start in range(0, n, chunk_size):
+            end = min(start + chunk_size, n)
+            y0_chunk = true_dgp.sample_conditional(scenario, 0, X0[start:end], n_mc=n_mc, rng=rng)
+            y1_chunk = true_dgp.sample_conditional(scenario, 1, X1[start:end], n_mc=n_mc, rng=rng)
+            chunks.append(_roc_from_samples_batch(y0_chunk, y1_chunk, p))
+        return np.concatenate(chunks, axis=0)
 
     mean0 = true_dgp.true_mean(scenario, 0, X0)
     mean1 = true_dgp.true_mean(scenario, 1, X1)
