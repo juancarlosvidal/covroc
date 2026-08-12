@@ -40,6 +40,46 @@ def roc_from_samples(y0, y1, p):
     return 1 - ecdf1(inv_ecdf0(1 - p))
 
 
+def _roc_from_samples_batch(y0, y1, p):
+    """Row-batched equivalent of calling roc_from_samples(y0[i], y1[i], p) once per row
+    -- numerically identical (verified to within float64 rounding, ~1e-16) to that loop,
+    but avoids constructing an ECDF + interp1d Python object per row. Used by
+    true_roc_curve's Scenario VII branch, where that loop was the dominant cost (one call
+    per subject, each over n_mc=20000 Monte Carlo draws).
+
+    y0, y1: (n, n_mc) arrays of MC draws, one row per subject. p: (len_p,) grid.
+    Returns (n, len_p).
+    """
+    n, n_mc = y0.shape
+    y0_sorted = np.sort(y0, axis=1)
+    y1_sorted = np.sort(y1, axis=1)
+
+    # ecdf0(y0_sorted) evaluated at its own (sorted, tie-free for continuous MC draws)
+    # data points is just rank / n_mc -- identical across rows, so the interpolation
+    # x-grid (and therefore the bracket indices/weights below) is shared by every row;
+    # only the y0_sorted *values* at those brackets differ row to row.
+    f_vals = np.arange(1, n_mc + 1) / n_mc
+    q = 1 - p
+    idx = np.clip(np.searchsorted(f_vals, q, side="left"), 1, n_mc - 1)
+    lo, hi = idx - 1, idx
+    with np.errstate(divide="ignore", invalid="ignore"):
+        weight = np.clip((q - f_vals[lo]) / (f_vals[hi] - f_vals[lo]), 0.0, 1.0)
+    quantiles = y0_sorted[:, lo] + weight[None, :] * (y0_sorted[:, hi] - y0_sorted[:, lo])
+    # bounds_error=False, fill_value=(y0[0], y0[-1]) equivalent: clip queries outside
+    # the achievable probability range to the min/max sample instead of extrapolating.
+    quantiles[:, q < f_vals[0]] = y0_sorted[:, [0]]
+    quantiles[:, q > f_vals[-1]] = y0_sorted[:, [-1]]
+
+    # ecdf1 evaluated at each row's own quantiles still needs a per-row pass (both the
+    # reference array and the query points vary by row), but it's a single cheap
+    # searchsorted call per row now instead of building two ECDF objects and an
+    # interp1d -- negligible next to the sorts above.
+    ecdf1_vals = np.empty((n, len(p)))
+    for i in range(n):
+        ecdf1_vals[i] = np.searchsorted(y1_sorted[i], quantiles[i], side="right") / n_mc
+    return 1 - ecdf1_vals
+
+
 def _ab_from_means_stds(mean0, mean1, std0, std1):
     epsilon = 1e-8
     higher_is_1 = mean1 > mean0
@@ -61,7 +101,7 @@ def true_roc_curve(scenario, X0, X1, p=DEFAULT_P_GRID, n_mc=DEFAULT_N_MC, rng=No
     if scenario == 7:
         y0 = true_dgp.sample_conditional(scenario, 0, X0, n_mc=n_mc, rng=rng)
         y1 = true_dgp.sample_conditional(scenario, 1, X1, n_mc=n_mc, rng=rng)
-        return np.array([roc_from_samples(y0[i], y1[i], p) for i in range(n)])
+        return _roc_from_samples_batch(y0, y1, p)
 
     mean0 = true_dgp.true_mean(scenario, 0, X0)
     mean1 = true_dgp.true_mean(scenario, 1, X1)
