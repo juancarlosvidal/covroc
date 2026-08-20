@@ -13,6 +13,8 @@ DGP via the same empirical-CDF construction the roc() estimator in the
 *_reg_data_simulation* scripts uses on residuals -- applied here to raw Y draws from the
 known population distribution.
 """
+import zlib
+
 import numpy as np
 from scipy.stats import norm
 from scipy.integrate import simpson
@@ -23,6 +25,18 @@ import true_dgp
 
 DEFAULT_N_MC = 20000
 DEFAULT_P_GRID = np.linspace(0.001, 0.999, 100)
+
+
+def seed_from_name(name):
+    """Deterministic 32-bit seed derived from a replicate name (e.g.
+    "scenario_7_20000_3"). Stable across processes and reruns, unlike Python's built-in
+    hash() (randomized per-process for strings by default). Intended for
+    np.random.default_rng(seed_from_name(sceminario)), passed as true_roc_curve's/
+    true_auc's rng, so every method (naive/linear/spline/FNN/RF/coverage) scores against
+    the identical Monte Carlo ground truth for a given Scenario VII replicate, and reruns
+    reproduce the same ground truth instead of drawing fresh noise each time.
+    """
+    return zlib.crc32(name.encode())
 
 
 def _roc_from_ab(a, b, p):

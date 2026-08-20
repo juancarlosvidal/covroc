@@ -312,7 +312,8 @@ if __name__ == '__main__':
             # scenarios, Monte Carlo (via the true DGP) for Scenario 7's non-Gaussian
             # healthy arm. RF previously had no ground-truth comparison at all
             # (Reviewer 1, Major Concern 1).
-            roc_real = list(ground_truth_auc.true_roc_curve(scenario_num, X0_true, X1_true, p=p))
+            rng = np.random.default_rng(ground_truth_auc.seed_from_name(sceminario))
+            roc_real = list(ground_truth_auc.true_roc_curve(scenario_num, X0_true, X1_true, p=p, rng=rng))
 
             for roc_values_real in roc_real:
                 plt.plot(p, np.array(roc_values_real))

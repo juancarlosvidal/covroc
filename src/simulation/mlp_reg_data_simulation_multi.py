@@ -489,7 +489,8 @@ def main(config):
             # healthy arm. Replaces the old hardcoded-std closed-form-only computation,
             # which was wrong for Scenario 7 (Reviewer 1, Major Concern 1).
             p = np.linspace(0.001, 0.999, 100)
-            roc_real = list(ground_truth_auc.true_roc_curve(scenario_num, X0_true, X1_true, p=p))
+            rng = np.random.default_rng(ground_truth_auc.seed_from_name(sceminario))
+            roc_real = list(ground_truth_auc.true_roc_curve(scenario_num, X0_true, X1_true, p=p, rng=rng))
 
             area = roc(a_predicted[0], b_predicted[0], residues_0, residues_1)
             print(f'AUC: {area}')

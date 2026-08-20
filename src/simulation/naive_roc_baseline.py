@@ -50,7 +50,8 @@ def main(input_dir, output_dir):
 
         # Same pooled curve for every subject -- the naive estimator doesn't condition on x.
         roc_predicted = [naive_curve] * len(index_0)
-        roc_real = list(ground_truth_auc.true_roc_curve(scenario_num, X0_true, X1_true, p=P_GRID))
+        rng = np.random.default_rng(ground_truth_auc.seed_from_name(sceminario))
+        roc_real = list(ground_truth_auc.true_roc_curve(scenario_num, X0_true, X1_true, p=P_GRID, rng=rng))
 
         eval_io.write_mse_and_timing(output_dir, sceminario, roc_predicted, roc_real, 'Naive', fit_seconds_total)
         print(f'{sceminario}: naive pooled ROC vs. ground truth written to {output_dir}/{sceminario}/')

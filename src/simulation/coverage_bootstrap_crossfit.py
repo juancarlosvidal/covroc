@@ -76,7 +76,8 @@ def main(config):
         X0, Y0, W0 = data_0["x"], data_0["y"], data_0["w"]
         X1, Y1, W1 = data_1["x"], data_1["y"], data_1["w"]
 
-        true_auc_vals = ground_truth_auc.true_auc(scenario_num, X0_true, X1_true)
+        rng = np.random.default_rng(ground_truth_auc.seed_from_name(sceminario))
+        true_auc_vals = ground_truth_auc.true_auc(scenario_num, X0_true, X1_true, rng=rng)
 
         t0 = time.perf_counter()
         auc_mean, auc_lower, auc_upper, n_oob = bootstrap_crossfit_oob_paired(
