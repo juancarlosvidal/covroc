@@ -10,7 +10,11 @@ RSCRIPT=${RSCRIPT:-/mnt/beegfs/home/juan.vidal/miniforge3/envs/r-covroc/bin/Rscr
 # of ROCnReg::AROC.bnp at both sample sizes (Reviewer 1, Major Concern 2 -- the same
 # review response commitment py_baselines_array.sh covers for naive/linear/spline).
 # CPU-only, no GPU needed. Covariate lists mirror true_dgp._COVARIATE_COLUMNS in
-# src/simulation/true_dgp.py -- keep in sync if that ever changes.
+# src/simulation/true_dgp.py -- keep in sync if that ever changes. Skips any (scenario,
+# sample size) that already has a *_timing.csv under output/aroc_bnp_timing/ -- safe to
+# re-run/extend against a partially-complete output dir instead of needing a hardcoded
+# list of what's already done (which is exactly what silently left scenario 8's n=20000
+# untimed the first time this ran).
 #
 # Measured on scenario_1 (1 covariate): ~382s at n=5000, ~1569s at n=20000 (roughly
 # linear in N). Measured on scenario_8 (4 covariates) at n=5000: ~434s, only ~14% over
@@ -32,6 +36,11 @@ esac
 
 for N in 5000 20000; do
   FILE="input_real_2/scenario_${SCENARIO}/scenario_${SCENARIO}_${N}_1_data.csv"
+  OUT_FILE="output/aroc_bnp_timing/scenario_${SCENARIO}_${N}_1_data_timing.csv"
+  if [ -f "$OUT_FILE" ]; then
+    echo "=== scenario_$SCENARIO, n=$N: $OUT_FILE already exists, skipping ==="
+    continue
+  fi
   echo "=== scenario_$SCENARIO, n=$N ==="
   command="$RSCRIPT R/aroc_bnp_timing.R $FILE $COVARIATES"
   echo $command
