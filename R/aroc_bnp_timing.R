@@ -31,12 +31,15 @@ cat(sprintf(
   csv_file, formula_str, nrow(df), sum(df$mortstat == 0), sum(df$mortstat == 1)
 ))
 
-# NOTE: not run/verified here (no R/ROCnReg available in this environment) -- if
-# AROC.bnp's argument names differ from AROC.sp's in your installed ROCnReg version,
-# adjust to match (check ?AROC.bnp).
+# Verified against ROCnReg 1.0-9's actual AROC.bnp signature (formula.h, group, tag.h,
+# data, ..., p, ...) -- unlike AROC.sp/cROC.sp used elsewhere in R/, the first argument
+# is named formula.h, not formula (only argument that starts with "formula" here, so
+# formula = ... would partial-match fine too, but spelled out explicitly to not rely on
+# that). Every other argument (standardise, ci.level, prior.h, mcmc, ...) is left at its
+# default, matching how AROC.sp is called elsewhere in R/ for the timing comparison.
 elapsed <- system.time({
   aroc_bnp_model <- AROC.bnp(
-    formula = as.formula(formula_str),
+    formula.h = as.formula(formula_str),
     group = "mortstat",
     tag.h = 0,
     data = df,
