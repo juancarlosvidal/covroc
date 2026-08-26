@@ -104,6 +104,10 @@ def _scenario_id(scenario):
     match = re.match(r"^(scenario_\d+)_", scenario)
     return match.group(1) if match else scenario
 
+def _sample_size(scenario):
+    match = re.match(r"^scenario_\d+_(\d+)_", scenario)
+    return int(match.group(1)) if match else None
+
 # Aggregate per-replicate computation time (one timing.csv row per replicate folder)
 # into per-scenario, per-method statistics -- e.g. FNN vs. Random Forest wall-clock
 # fit time (Reviewer 1, Major Concern 1).
@@ -120,14 +124,16 @@ else:
     print("No timing.csv files found; skipping timing summary.")
 
 # Aggregate per-replicate Mean-Function/Std-Function MSE (one mean_std_mse.csv per
-# replicate folder, two rows: healthy/diseased) into per-scenario, per-method,
-# per-group statistics across the 100 replicates -- feeds mean_std_mse_boxplots.py
-# (Reviewer 1, Minor Concerns 3 & 4).
+# replicate folder, two rows: healthy/diseased) into per-scenario, per-sample-size,
+# per-method, per-group statistics across the 100 replicates -- feeds
+# mean_std_mse_boxplots.py and the Supplementary Material's per-sample-size comparison
+# table (Reviewer 1, Minor Concerns 3 & 4).
 if mean_std_mse_rows:
     all_mean_std_mse = pd.concat(mean_std_mse_rows, ignore_index=True)
     all_mean_std_mse["Scenario ID"] = all_mean_std_mse["Scenario"].apply(_scenario_id)
+    all_mean_std_mse["Sample Size"] = all_mean_std_mse["Scenario"].apply(_sample_size)
 
-    mean_std_mse_summary = all_mean_std_mse.groupby(["Scenario ID", "Method", "Group"])[
+    mean_std_mse_summary = all_mean_std_mse.groupby(["Scenario ID", "Sample Size", "Method", "Group"])[
         ["Mean-Function MSE", "Std-Function MSE"]
     ].agg(["mean", "median", "std", "min", "max", "count"])
     mean_std_mse_summary.columns = [f"{metric} {stat.capitalize()}" for metric, stat in mean_std_mse_summary.columns]
