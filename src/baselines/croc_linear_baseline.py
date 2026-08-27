@@ -36,7 +36,7 @@ def prepare_nn_data(df, covariates, target):
     return {'x': x, 'y': y, 'w': w}, df_clean
 
 def compute_ROC(formula_h, formula_d, data_h, data_d, newdata, est_cdf, pauc, p,
-                 newdata_h=None, newdata_d=None):
+                 newdata_h=None, newdata_d=None, adaptive_direction=False):
 
 
     """
@@ -48,6 +48,24 @@ def compute_ROC(formula_h, formula_d, data_h, data_d, newdata, est_cdf, pauc, p,
     Pass `newdata_h`/`newdata_d` instead to evaluate each group's model at different
     rows (the row-paired convention the FNN/RF ground-truth comparison in
     ground_truth_auc.py uses).
+
+    adaptive_direction=False (default) always uses a = (mu_h - mu_d)/sigma_d, matching
+    the paper's Methods formula and ROCnReg::cROC.sp's own fixed-direction convention --
+    keep this default when validating against the real R package (R/croc_sp_validation.R,
+    src/baselines/croc_sp_validation.py) or reporting the real-data NHANES case study, so
+    fidelity to the R package is preserved.
+
+    adaptive_direction=True instead reports, per row, a = |mu_1(x) - mu_0(x)| / sigma of
+    whichever group has the higher predicted mean, i.e. it adapts to which group is
+    locally more likely to have the higher marker value rather than assuming group 1 is
+    always higher. This matches ground_truth_auc._ab_from_means_stds and
+    mlp_reg_data_simulation_multi.py's a_predicted/b_predicted, which the FNN/RF
+    ground-truth comparison already uses -- needed because some scenarios' healthy/
+    diseased conditional means cross over within the covariate range (e.g. Scenario IV),
+    where the fixed-direction formula and the adaptive ground truth diverge sharply even
+    for a perfectly-fit model (Reviewer 2, Major Comment 5 investigation). Used by
+    src/simulation/linear_reg_data_simulation.py for the simulation-scenario baselines,
+    not by the real-data case study or the R validation.
     """
     # p: numpy array of FPF values
     # Extract marker (the response variable) from the left‐hand side of formula_h
@@ -70,24 +88,41 @@ def compute_ROC(formula_h, formula_d, data_h, data_d, newdata, est_cdf, pauc, p,
     beta_d.update(fit_d.params)
 
     # Compute “ROC” coefficients as in R: (beta.h - beta.d)/sigma_d and add b = sigma_h/sigma_d
+    # (diagnostic/reporting only -- always the fixed-direction contrast, regardless of
+    # adaptive_direction, since there is no single per-coefficient adaptive analogue).
     beta_ROC = (beta_h - beta_d) / sigma_d
     beta_ROC['b'] = sigma_h / sigma_d
 
-    # Compute predictions on newdata (or newdata_h/newdata_d, if given):
-    a = (fit_h.predict(newdata_h if newdata_h is not None else newdata).values
-         - fit_d.predict(newdata_d if newdata_d is not None else newdata).values) / sigma_d
-    b_val = sigma_h / sigma_d  # scalar
+    mean_h = fit_h.predict(newdata_h if newdata_h is not None else newdata).values
+    mean_d = fit_d.predict(newdata_d if newdata_d is not None else newdata).values
 
     if est_cdf == "normal":
-        # Compute the ROC curve:
-        # For each newdata row, for each false-positive fraction p, compute:
-        #    ROC = 1 - Phi( a + b * Phi^(-1)(1-p) )
         q = norm.ppf(1 - p)  # quantiles for each p
-        # Outer sum: shape (n_newdata, len(p))
-        M = np.outer(a, np.ones_like(q)) + np.outer(np.ones_like(a), b_val * q)
-        cROC = 1 - norm.cdf(M)
-        # AUC for each newdata row
-        cAUC = 1 - norm.cdf(a / np.sqrt(1 + b_val**2))
+        epsilon = 1e-8
+        if adaptive_direction:
+            # Per-row: whichever group has the higher predicted mean plays the role of
+            # "group 1" in a = (mu_1 - mu_0)/sigma_1, b = sigma_0/sigma_1, matching
+            # ground_truth_auc._ab_from_means_stds and _roc_from_ab exactly (1 - Phi(b*q - a),
+            # not 1 - Phi(a + b*q) as in the fixed-direction branch below).
+            higher_is_d = mean_d > mean_h
+            a = np.where(higher_is_d, (mean_d - mean_h) / (sigma_d + epsilon), (mean_h - mean_d) / (sigma_h + epsilon))
+            b_val = np.where(higher_is_d, sigma_h / (sigma_d + epsilon), sigma_d / (sigma_h + epsilon))
+            M = np.outer(b_val, q) - a[:, None]
+            cROC = 1 - norm.cdf(M)
+            # a >= 0 by construction here, so this is already >= 0.5 for real separation
+            # (unlike the fixed-direction branch's 1 - Phi(...), which can fall below 0.5).
+            cAUC = norm.cdf(a / np.sqrt(1 + b_val**2))
+        else:
+            # Fixed direction: always a = (mu_h - mu_d)/sigma_d, matching the paper's
+            # Methods formula and ROCnReg::cROC.sp.
+            a = (mean_h - mean_d) / sigma_d
+            b_val = sigma_h / sigma_d  # scalar
+            # Compute the ROC curve:
+            # For each newdata row, for each false-positive fraction p, compute:
+            #    ROC = 1 - Phi( a + b * Phi^(-1)(1-p) )
+            M = np.outer(a, np.ones_like(q)) + np.outer(np.ones_like(a), b_val * q)
+            cROC = 1 - norm.cdf(M)
+            cAUC = 1 - norm.cdf(a / np.sqrt(1 + b_val**2))
         if pauc.get('compute', False):
             # pAUC: additional computations would be needed here
             cpAUC = np.full_like(cAUC, np.nan)
@@ -108,7 +143,7 @@ def compute_ROC(formula_h, formula_d, data_h, data_d, newdata, est_cdf, pauc, p,
     return res
 
 def do_boost_roc(i, formula_h, formula_d, data_h, data_d, newdata, croc, est_cdf, pauc, p, marker,
-                  newdata_h=None, newdata_d=None):
+                  newdata_h=None, newdata_d=None, adaptive_direction=False):
     """
     One bootstrap replication: resample the residuals (with replacement) and recalculate the ROC curve.
     """
@@ -120,14 +155,14 @@ def do_boost_roc(i, formula_h, formula_d, data_h, data_d, newdata, croc, est_cdf
     res_d = croc['fit']['d'].resid.values
     res_h_b = np.random.choice(res_h, size=len(res_h), replace=True)
     res_d_b = np.random.choice(res_d, size=len(res_d), replace=True)
-    
+
     # Replace the marker values with fitted values plus bootstrapped residuals
     data_boot_h[marker] = croc['fit']['h'].fittedvalues + res_h_b
     data_boot_d[marker] = croc['fit']['d'].fittedvalues + res_d_b
-    
+
     # Recalculate ROC using the bootstrapped data
     obj_boot = compute_ROC(formula_h, formula_d, data_boot_h, data_boot_d, newdata, est_cdf, pauc, p,
-                            newdata_h=newdata_h, newdata_d=newdata_d)
+                            newdata_h=newdata_h, newdata_d=newdata_d, adaptive_direction=adaptive_direction)
     res = {
         'ROC': obj_boot['ROC'],
         'AUC': obj_boot['AUC'],
@@ -142,7 +177,7 @@ def do_boost_roc(i, formula_h, formula_d, data_h, data_d, newdata, croc, est_cdf
 def cROC_sp(formula_h, formula_d, group, tag_h, data, newdata=None,
             newdata_h=None, newdata_d=None,
             est_cdf="normal", pauc=None, p=None, B=1000, ci_level=0.95,
-            parallel="no", ncpus=1, cl=None):
+            parallel="no", ncpus=1, cl=None, adaptive_direction=False):
     """
     Main function to compute the covariate‐specific ROC (cROC) and its bootstrap confidence intervals.
 
@@ -160,6 +195,10 @@ def cROC_sp(formula_h, formula_d, group, tag_h, data, newdata=None,
       - p: numpy array of false-positive fractions (default is 101 equally spaced points from 0 to 1).
       - B: number of bootstrap replications. B=0 skips the bootstrap and returns NaN confidence intervals.
       - ci_level: confidence level (e.g. 0.95).
+      - adaptive_direction: see compute_ROC's docstring. False (default) matches
+        ROCnReg::cROC.sp exactly, for R-vs-Python validation and the real-data case
+        study; True matches ground_truth_auc.py's convention, for the simulation-scenario
+        ground-truth comparison (src/simulation/linear_reg_data_simulation.py).
 
     Returns:
       A dictionary with the estimated ROC curves, AUC values, bootstrap confidence intervals,
@@ -206,7 +245,7 @@ def cROC_sp(formula_h, formula_d, group, tag_h, data, newdata=None,
 
     # Compute the ROC and AUC using the original data
     res_fit = compute_ROC(formula_h, formula_d, data_h, data_d, newdata, est_cdf, pauc, p,
-                           newdata_h=newdata_h, newdata_d=newdata_d)
+                           newdata_h=newdata_h, newdata_d=newdata_d, adaptive_direction=adaptive_direction)
     croc = res_fit
     cROC_est = croc['ROC']      # shape: (n_newdata, len(p))
     cAUC_est = croc['AUC']      # shape: (n_newdata,)
@@ -221,7 +260,8 @@ def cROC_sp(formula_h, formula_d, group, tag_h, data, newdata=None,
         for i in range(B):
             boot_res = do_boost_roc(i, formula_h, formula_d, data_h, data_d, newdata,
                                       croc, est_cdf, pauc, p, marker,
-                                      newdata_h=newdata_h, newdata_d=newdata_d)
+                                      newdata_h=newdata_h, newdata_d=newdata_d,
+                                      adaptive_direction=adaptive_direction)
             boot_results.append(boot_res)
         
         # Stack bootstrap results for ROC and AUC:
