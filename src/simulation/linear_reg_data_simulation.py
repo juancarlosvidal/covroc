@@ -74,7 +74,7 @@ def main(input_dir, output_dir, formula_type, spline_df):
                 formula_h=formula, formula_d=formula,
                 group='mortstat', tag_h=0, data=df,
                 newdata_h=index_0[ground_truth_cols], newdata_d=index_1[ground_truth_cols],
-                p=P_GRID, B=0,
+                p=P_GRID, B=0, adaptive_direction=True,
             )
         fit_seconds_total = time.perf_counter() - t0
 
