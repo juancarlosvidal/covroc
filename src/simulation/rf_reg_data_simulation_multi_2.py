@@ -292,12 +292,16 @@ if __name__ == '__main__':
             def G_D(y):
                 return norm.cdf(y)
 
+            # Parametric (Gaussian) formula, NOT roc_curve()/roc() -- residues_0/residues_1
+            # are SQUARED residuals (compute_residues returns (y_true - output)**2, always
+            # >= 0), so an empirical CDF built from them does not represent the standardized
+            # error term's distribution (see mlp_reg_data_simulation_multi.py for the same
+            # note).
             p = np.linspace(0.001, 0.999, 100)
             roc_predicted = []
             auc_predicted = []
             for i in range(len(a_predicted)):
                 roc_values_predicted = 1 - G_D(norm.ppf(1-p) * b_predicted[i] - a_predicted[i])
-                #roc_values_predicted= roc(a_predicted[i ], b_predicted[i], residues_0, residues_1)
                 roc_predicted.append(roc_values_predicted)
                 plt.plot(p, np.array(roc_values_predicted))
 
