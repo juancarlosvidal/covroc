@@ -54,7 +54,7 @@ def _fit_group_bootstrap(X_pool, Y_pool, W_pool, X_eval, mlp_config, K, device, 
     kf = KFold(n_splits=K, shuffle=True)
     X_eval_t = torch.tensor(X_eval, dtype=torch.float32).to(device)
     mu_accum = np.zeros(X_eval.shape[0])
-    sigma_accum = np.zeros(X_eval.shape[0])
+    var_accum = np.zeros(X_eval.shape[0])
     std_resid_pool = []
 
     for tr_idx, val_idx in kf.split(np.arange(n)):
@@ -96,14 +96,17 @@ def _fit_group_bootstrap(X_pool, Y_pool, W_pool, X_eval, mlp_config, K, device, 
         eps = (Y_val.ravel() - mu_val) / np.clip(sigma_val, 1e-6, None)
         std_resid_pool.append(eps)
 
-        # Fold-averaged predictions at the evaluation covariates.
+        # Fold-averaged predictions at the evaluation covariates. Averaged in variance
+        # space, not sigma space: by Jensen's inequality mean(sqrt(v_k)) <= sqrt(mean(v_k))
+        # for any nonconstant v_k, so averaging post-sqrt would systematically
+        # underestimate sigma(x).
         mean_model.eval()
         var_model.eval()
         with torch.no_grad():
             mu_accum += mean_model(X_eval_t).cpu().numpy().ravel() / K
-            sigma_accum += np.sqrt(np.clip(var_model(X_eval_t).cpu().numpy().ravel(), 0, None)) / K
+            var_accum += np.clip(var_model(X_eval_t).cpu().numpy().ravel(), 0, None) / K
 
-    return mu_accum, sigma_accum, np.concatenate(std_resid_pool)
+    return mu_accum, np.sqrt(var_accum), np.concatenate(std_resid_pool)
 
 
 def compute_empirical_auc(mu0, mu1, s0, s1, eps0, eps1, n_mc=500, adaptive_direction=False):
