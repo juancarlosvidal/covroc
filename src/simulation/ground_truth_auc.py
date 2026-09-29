@@ -126,6 +126,18 @@ def true_roc_curve(scenario, X0, X1, p=DEFAULT_P_GRID, n_mc=DEFAULT_N_MC, rng=No
             end = min(start + chunk_size, n)
             y0_chunk = true_dgp.sample_conditional(scenario, 0, X0[start:end], n_mc=n_mc, rng=rng)
             y1_chunk = true_dgp.sample_conditional(scenario, 1, X1[start:end], n_mc=n_mc, rng=rng)
+            # Apply the same adaptive orientation _ab_from_means_stds() applies below: the
+            # higher-mean arm plays the case role. Scenario VII is the only scenario routed
+            # through the Monte Carlo path, and without this it was the only one whose truth
+            # could fall below 0.5 -- while every estimator uses |mu1 - mu0| and so reports
+            # max(AUC, 1 - AUC). That mismatch showed up as a spurious +0.29/+0.17 bias at
+            # the two grid points where AUC(x) < 0.5. true_dgp.true_mean() cannot be used
+            # here (no closed form for group 0), hence the sample means.
+            swap = y1_chunk.mean(axis=1) < y0_chunk.mean(axis=1)
+            if swap.any():
+                held = y0_chunk[swap]          # fancy indexing already copies
+                y0_chunk[swap] = y1_chunk[swap]
+                y1_chunk[swap] = held
             chunks.append(_roc_from_samples_batch(y0_chunk, y1_chunk, p))
         return np.concatenate(chunks, axis=0)
 
