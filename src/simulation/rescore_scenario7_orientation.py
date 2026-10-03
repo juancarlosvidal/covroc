@@ -176,13 +176,27 @@ def main():
 
     names = sorted(n for n in os.listdir(args.input_dir)
                    if os.path.isdir(os.path.join(args.input_dir, n)))
+
+    # Hard guard, not merely a default: rf_reg_data_simulation_multi_2.py writes every
+    # replicate of every scenario into one <var_to_group>_rf/ directory, with no
+    # per-scenario level. A loose -pt such as '_5000_' would then sweep in Scenario I--IX
+    # folders and score each against Scenario VII's Monte Carlo truth, silently producing
+    # garbage. The folder name carries the scenario, so require it to agree.
+    scen_rx = re.compile(rf"^scenario_{args.scenario}_")
+    off_scenario = [n for n in names if not scen_rx.match(n)]
+    names = [n for n in names if scen_rx.match(n)]
+    if off_scenario:
+        print(f"    ignoradas {len(off_scenario)} carpetas de otros escenarios "
+              f"(p.ej. {off_scenario[0]})")
+
     if args.pattern:
         rx = re.compile(args.pattern)
         names = [n for n in names if rx.search(n)]
     if args.limit:
         names = names[:args.limit]
     if not names:
-        sys.exit(f"!! no replicate folders under {args.input_dir} matching {args.pattern!r}")
+        sys.exit(f"!! no scenario-{args.scenario} replicate folders under "
+                 f"{args.input_dir} matching {args.pattern!r}")
 
     print(f"=== re-scoring {len(names)} replicate(s) from {args.input_dir} ===")
     print(f"    scenario {args.scenario} | n_mc = {args.n_mc}\n")
