@@ -18,6 +18,13 @@ PYTHON=${PYTHON:-/mnt/beegfs/home/juan.vidal/miniforge3/envs/covroc/bin/python3.
 # $5: train_frac (default 0.5)
 # $6: early_stop_patience (default 40)
 # $7: pattern (default solo n=5000)
+# $8: ci_levels, separados por comas (default "0.95,0.8,0.5")
+#     Para una banda SIMULTANEA sobre los G puntos de la rejilla por Sidak, pide ademas el
+#     nivel puntual alpha^(1/G): con G=11, 0.99535 / 0.9799 / 0.93893 dan simultaneas de
+#     0.95 / 0.80 / 0.50. Sidak es casi exacto aqui, no conservador, porque los puntos de
+#     la rejilla resultaron ser practicamente independientes (la simultanea sin corregir,
+#     0.443, coincide con el 0.434 que predice la independencia).
+#     Salen todos del mismo ajuste, asi que anadir niveles no cuesta tiempo.
 INPUT_DIR=$1
 OUTPUT_DIR=$2
 K_LIST=${3:-5,10,15,20,50,100,300,1000}
@@ -25,8 +32,9 @@ N_POINTS=${4:-100}
 TRAIN_FRAC=${5:-0.5}
 EARLY_STOP=${6:-40}
 PATTERN=${7:-_5000_.*_data\.csv$}
+CI_LEVELS=${8:-0.95,0.8,0.5}
 
 mkdir -p "$OUTPUT_DIR"
-command="$PYTHON src/simulation/coverage_local_knn.py -i $INPUT_DIR -o $OUTPUT_DIR -e 800 -es $EARLY_STOP -kl $K_LIST -np $N_POINTS -tf $TRAIN_FRAC -ci 0.95,0.8,0.5 -pt "$PATTERN""
+command="$PYTHON src/simulation/coverage_local_knn.py -i $INPUT_DIR -o $OUTPUT_DIR -e 800 -es $EARLY_STOP -kl $K_LIST -np $N_POINTS -tf $TRAIN_FRAC -ci $CI_LEVELS -pt "$PATTERN""
 echo $command
 $command
