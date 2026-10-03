@@ -44,6 +44,10 @@ if [ -z "${MODE:-}" ]; then
 fi
 
 SUF=$( [ "$LIMIT" -eq 0 ] && echo full || echo smoke )
+# El tamano muestral entra en el nombre: sin esto, una pasada con PATTERN='_20000_'
+# escribiria sobre el CSV de la de '_5000_', que cuesta 37 min y no se recupera.
+SIZE_TAG=$(printf '%s' "$PATTERN" | tr -cd '0-9')
+[ -n "$SIZE_TAG" ] && SUF="${SUF}_n${SIZE_TAG}"
 mkdir -p "$OUT_DIR"
 
 echo "=== run_rescore_s7.sh | $MODE_ARG | modo=$MODE | $(date) ==="

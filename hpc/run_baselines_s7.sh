@@ -28,9 +28,10 @@ cd "$(dirname "$0")/.."
 
 SIZE_ARG=${1:-n5000}
 case "$SIZE_ARG" in
-  n5000) PATTERN='_5000_' ;;
-  both)  PATTERN=''       ;;
-  *) echo "uso: $0 [n5000|both]" >&2; exit 2 ;;
+  n5000)  PATTERN='_5000_'  ;;
+  n20000) PATTERN='_20000_' ;;
+  both)   PATTERN=''        ;;
+  *) echo "uso: $0 [n5000|n20000|both]" >&2; exit 2 ;;
 esac
 
 BASELINES=${BASELINES:-"naive linear spline"}
