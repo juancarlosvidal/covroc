@@ -14,8 +14,10 @@
 # Si la prueba de humo falla, no gastes los 37 minutos.
 #
 # Variables de entorno:
+#   METHODS    cuales lanzar: "fnn rf", "fnn", "rf"  (default "fnn rf")
+#              p.ej. METHODS=rf ./hpc/run_rescore_s7.sh  para no repetir la FNN
 #   FNN_DIR    carpeta del escenario 7 de la FNN   (default output/fnn/scenario_7)
-#   RF_DIR     idem del Random Forest             (default output/fnn_rf/scenario_7)
+#   RF_DIR     idem del Random Forest             (default output/rf/scenario_7/mortstat_rf)
 #   OUT_DIR    donde dejar los CSV y los logs     (default output/rescore_s7)
 #   PATTERN    tamano muestral                    (default _5000_)
 #   MODE       sbatch | local                     (default: sbatch si existe)
@@ -31,7 +33,8 @@ case "$MODE_ARG" in
 esac
 
 FNN_DIR=${FNN_DIR:-output/fnn/scenario_7}
-RF_DIR=${RF_DIR:-output/fnn_rf/scenario_7}
+RF_DIR=${RF_DIR:-output/rf/scenario_7/mortstat_rf}
+METHODS=${METHODS:-"fnn rf"}
 OUT_DIR=${OUT_DIR:-output/rescore_s7}
 PATTERN=${PATTERN:-_5000_}
 PYTHON=${PYTHON:-/mnt/beegfs/home/juan.vidal/miniforge3/envs/covroc/bin/python3.10}
@@ -50,9 +53,12 @@ echo
 
 n_sent=0
 n_fail=0
-for PAIR in "fnn:$FNN_DIR" "rf:$RF_DIR"; do
-  TAG=${PAIR%%:*}
-  DIR=${PAIR#*:}
+for TAG in $METHODS; do
+  case "$TAG" in
+    fnn) DIR=$FNN_DIR ;;
+    rf)  DIR=$RF_DIR  ;;
+    *) echo "!! metodo desconocido '$TAG' (usa fnn, rf, o ambos)" >&2; continue ;;
+  esac
   if [ ! -d "$DIR" ]; then
     echo "!! $DIR no existe -- saltando $TAG" >&2
     echo "   (si la ruta del RF es otra, relanza con RF_DIR=... $0 $MODE_ARG)" >&2
