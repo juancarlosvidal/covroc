@@ -24,8 +24,11 @@ import eval_io
 P_GRID = np.linspace(0.001, 0.999, 100)
 
 
-def main(input_dir, output_dir):
+def main(input_dir, output_dir, pattern=""):
     only_files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+    if pattern:
+        only_files = [f for f in only_files if re.search(pattern, f)]
+        print(f"pattern {pattern!r}: {len(only_files)} replicate file(s) selected")
 
     for f in only_files:
         file = os.path.join(input_dir, f)
@@ -61,5 +64,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Naive (pooled, no covariate adjustment) ROC baseline')
     parser.add_argument('-i', '--input_dir', default="./input_real_2", help='Input directory (one scenario\'s replicate CSVs)')
     parser.add_argument('-o', '--output_dir', default="./output", help='Output directory')
+    parser.add_argument('-pt', '--pattern', default='',
+                        help='Regex; only replicate files whose name matches are processed (e.g. "_5000_" for one sample size). Default: all of them.')
     args = parser.parse_args()
-    main(args.input_dir, args.output_dir)
+    main(args.input_dir, args.output_dir, args.pattern)

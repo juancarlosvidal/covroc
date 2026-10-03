@@ -46,8 +46,11 @@ def build_formula(target, covariate_cols, formula_type, spline_df):
     return f"{target} ~ " + " + ".join(terms)
 
 
-def main(input_dir, output_dir, formula_type, spline_df):
+def main(input_dir, output_dir, formula_type, spline_df, pattern=""):
     only_files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+    if pattern:
+        only_files = [f for f in only_files if re.search(pattern, f)]
+        print(f"pattern {pattern!r}: {len(only_files)} replicate file(s) selected")
     method = METHOD_NAMES[formula_type]
 
     for f in only_files:
@@ -93,5 +96,7 @@ if __name__ == "__main__":
     parser.add_argument('--formula-type', choices=['linear', 'spline'], default='linear',
                          help='"linear" for a plain OLS aROC, "spline" for the additive-spline semiparametric aROC')
     parser.add_argument('--spline-df', type=int, default=4, help='Degrees of freedom per covariate B-spline (--formula-type spline only)')
+    parser.add_argument('-pt', '--pattern', default='',
+                        help='Regex; only replicate files whose name matches are processed (e.g. "_5000_" for one sample size). Default: all of them.')
     args = parser.parse_args()
-    main(args.input_dir, args.output_dir, args.formula_type, args.spline_df)
+    main(args.input_dir, args.output_dir, args.formula_type, args.spline_df, args.pattern)
