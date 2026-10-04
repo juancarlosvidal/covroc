@@ -305,6 +305,22 @@ def main(config):
             xvals = np.full(len(sel), np.nan)
         n_targets = len(row_ids)
 
+        # Localization space. "model" takes the neighbourhood in (mu_hat, sigma_hat), which is
+        # what makes the method usable when the covariate space is 4-dimensional (Scenarios
+        # VIII, IX); "covariate" takes it directly in x, which is only possible in low
+        # dimension but does not depend on the network being informative about the target.
+        # The NHANES cohort needs the latter -- there, localizing in model space leaves the
+        # neighbourhood 14 years off its target age, because mu_hat varies far less along the
+        # age grid than between subjects -- so the two are compared here on the same fits.
+        if config["localize"] == "covariate":
+            cov_scale = np.where(X0[te].std(axis=0) > 0, X0[te].std(axis=0), 1.0)
+            rep0 = X0[te] / cov_scale
+            rep1 = X1[te] / cov_scale
+            if config["targets"] == "grid":
+                q0 = q1 = grid_norm / cov_scale
+            else:
+                q0, q1 = rep0[sel], rep1[sel]
+
         t1 = time.perf_counter()
         rows = []
         for t in range(n_targets):
@@ -374,6 +390,9 @@ if __name__ == "__main__":
                         "replicas -> cada punto acumula ensayos independientes y la cobertura se "
                         "reporta como funcion de x. subjects: sujetos de test, como en las tandas previas.")
     p.add_argument("-gp", "--grid_points", type=int, default=11, help="Puntos de la rejilla fija")
+    p.add_argument("-loc", "--localize", choices=["model", "covariate"], default="model",
+                   help="donde se toma el vecindario: 'model' en (mu_hat, sigma_hat) (por "
+                        "defecto, el validado hasta ahora), 'covariate' directamente en x.")
     p.add_argument("-iv", "--interval", choices=["logit", "delong"], default="logit",
                    help="logit (por defecto): DeLong donde se porta bien, Wilson donde degenera. "
                         "delong: intervalo normal siempre, como en la primera tanda.")
@@ -387,4 +406,5 @@ if __name__ == "__main__":
           "batch_size": a.batch_size, "learning_rate": a.learning_rate,
           "weight_decay": a.weight_decay, "dropout": a.dropout, "hidden_layers": a.hidden_layers,
           "seed": a.seed, "pattern": a.pattern, "overwrite": a.overwrite, "interval": a.interval,
-          "targets": a.targets, "grid_points": a.grid_points})
+          "targets": a.targets, "grid_points": a.grid_points,
+          "localize": a.localize})
