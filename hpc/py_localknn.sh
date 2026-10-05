@@ -36,6 +36,12 @@ PYTHON=${PYTHON:-/mnt/beegfs/home/juan.vidal/miniforge3/envs/covroc/bin/python3.
 #     hasta ahora y lo unico viable con 4 covariables; "covariate" lo toma en x
 #     directamente. El caso NHANES necesita el segundo, asi que hay que medir
 #     los dos sobre los mismos escenarios para poder usar uno solo en el articulo.
+# $11: estimator -- plain | residualized (default plain)
+#     plain: Mann-Whitney sobre el vecindario, lo validado hasta ahora.
+#     residualized: congela la superficie del modelo y el vecindario estima solo su error
+#     local, AUC~ = A1(z) + Delta(z). Generaliza plain (es el caso m == 0) y anade una
+#     banda SIMULTANEA por multiplier bootstrap, que sale en filas con Method ...-SIM95.
+# $12: n_boot, remuestreos del multiplier bootstrap (default 1000; solo con residualized)
 INPUT_DIR=$1
 OUTPUT_DIR=$2
 K_LIST=${3:-5,10,15,20,50,100,300,1000}
@@ -46,8 +52,10 @@ PATTERN=${7:-_5000_.*_data\.csv$}
 CI_LEVELS=${8:-0.95,0.8,0.5}
 GRID_POINTS=${9:-11}
 LOCALIZE=${10:-model}
+ESTIMATOR=${11:-plain}
+N_BOOT=${12:-1000}
 
 mkdir -p "$OUTPUT_DIR"
-command="$PYTHON src/simulation/coverage_local_knn.py -i $INPUT_DIR -o $OUTPUT_DIR -e 800 -es $EARLY_STOP -kl $K_LIST -np $N_POINTS -tf $TRAIN_FRAC -ci $CI_LEVELS -gp $GRID_POINTS -loc $LOCALIZE -pt "$PATTERN""
+command="$PYTHON src/simulation/coverage_local_knn.py -i $INPUT_DIR -o $OUTPUT_DIR -e 800 -es $EARLY_STOP -kl $K_LIST -np $N_POINTS -tf $TRAIN_FRAC -ci $CI_LEVELS -gp $GRID_POINTS -loc $LOCALIZE -est $ESTIMATOR -nb $N_BOOT -pt "$PATTERN""
 echo $command
 $command

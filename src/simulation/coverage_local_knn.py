@@ -174,6 +174,55 @@ def arm_representation_at(mu_model, sigma_model, X_t, scale):
     return np.stack([mu, np.sqrt(var)], axis=1) / scale
 
 
+def mu_var_at(mu_model, sigma_model, X_t):
+    """(mu_hat, sigma_hat^2) at arbitrary points. The variance network's output IS sigma^2
+    (it is trained on squared residuals), so no sqrt here -- the residualized estimator
+    needs the variances themselves, not the standardized representation."""
+    with torch.no_grad():
+        mu = mu_model(X_t).view(-1).cpu().numpy()
+        var = np.clip(sigma_model(X_t).view(-1).cpu().numpy(), 0.0, None)
+    return mu, var
+
+
+def gaussian_auc(mu_a, var_a, mu_b, var_b):
+    """Location-scale AUC, P(A > B) under the Gaussian model. Equivalent to the manuscript's
+    Phi(a / sqrt(1 + b^2)) with a = (mu_1-mu_0)/sigma_1 and b = sigma_0/sigma_1, since
+    a/sqrt(1+b^2) = (mu_1-mu_0)/sqrt(sigma_1^2+sigma_0^2). Broadcasts, so passing a column
+    of cases against a row of controls gives the full pair matrix."""
+    return norm.cdf((mu_a - mu_b) / np.sqrt(np.clip(var_a + var_b, 1e-12, None)))
+
+
+def residualized_local_auc(yA, yB, mA, vA, mB, vB, a1):
+    """One-step (debiased) local AUC: freeze the model's surface, let the neighbourhood
+    estimate only its local error.
+
+        H_ij   = 1{Y_Ai > Y_Bj} + 0.5 * 1{=}         (observed pairwise comparison)
+        m_ij   = Phi[(mu_A(Z_i) - mu_B(Z_j)) / sqrt(var_A(Z_i) + var_B(Z_j))]   (model's)
+        Delta  = mean_ij (H_ij - m_ij)
+        AUC~   = a1 + Delta,     a1 = the model's AUC AT THE TARGET
+
+    Setting m == 0 recovers the plain Mann-Whitney estimator and the DeLong variance
+    exactly, so this is a strict generalization of the estimator validated so far.
+
+    Two things the correction buys. The residual removes the variation of m_ij ACROSS the
+    pairs of the neighbourhood -- not the Bernoulli noise of each pair, which is untouched
+    -- so it helps in proportion to how heterogeneous the neighbourhood is. And because a1
+    is evaluated at the target while mean(m_ij) is evaluated at the neighbours, their
+    difference corrects for the neighbourhood sitting off-centre from the target.
+
+    Variance by the Hajek projection of the U-statistic; the k^2 pairs are not independent.
+    """
+    kA, kB = len(yA), len(yB)
+    H = (yA[:, None] > yB[None, :]).astype(float) + 0.5 * (yA[:, None] == yB[None, :])
+    M = gaussian_auc(mA[:, None], vA[:, None], mB[None, :], vB[None, :])
+    R = H - M
+    delta = R.mean()
+    psiA = R.mean(axis=1) - delta          # one per case-role neighbour
+    psiB = R.mean(axis=0) - delta          # one per control-role neighbour
+    var = (psiA ** 2).sum() / kA ** 2 + (psiB ** 2).sum() / kB ** 2
+    return float(np.clip(a1 + delta, 0.0, 1.0)), float(max(var, 0.0)), psiA, psiB
+
+
 def build_fixed_grid(df, gt_cols, n_grid, lo_q=0.025, hi_q=0.975):
     """A grid of FIXED covariate profiles, identical across replicates and scenarios.
 
@@ -321,8 +370,21 @@ def main(config):
             else:
                 q0, q1 = rep0[sel], rep1[sel]
 
+        # Para el estimador residualizado: mu y var de cada sujeto de test y de cada
+        # objetivo, con las redes del split de entrenamiento (nunca vieron estos desenlaces).
+        if config["estimator"] == "residualized":
+            m0te, v0te = mu_var_at(mu0, s0, X0te_t)
+            m1te, v1te = mu_var_at(mu1, s1, X1te_t)
+            if config["targets"] == "grid":
+                m0q, v0q = mu_var_at(mu0, s0, g_t)
+                m1q, v1q = mu_var_at(mu1, s1, g_t)
+            else:
+                m0q, v0q, m1q, v1q = m0te[sel], v0te[sel], m1te[sel], v1te[sel]
+
         t1 = time.perf_counter()
         rows = []
+        infl = {}          # (k, t) -> (idxA, psiA, idxB, psiB, flip) para el multiplier bootstrap
+        pointwise = {}     # (k, t) -> (auc, se, truth)
         for t in range(n_targets):
             d0_ = np.linalg.norm(rep0 - q0[t], axis=1)
             d1_ = np.linalg.norm(rep1 - q1[t], axis=1)
@@ -331,10 +393,25 @@ def main(config):
             for k in k_list:
                 if k > n_te:
                     continue
-                if flip[t]:
-                    auc_k, var_k = delong_auc_var(y1te[o1[:k]], y0te[o0[:k]])
+                n0k, n1k = o0[:k], o1[:k]
+                # delong_auc_var(lower, higher) devuelve P(higher > lower). El brazo que hace
+                # de "positivo" es el 1 salvo que flip diga que su media es la menor.
+                if config["estimator"] == "residualized":
+                    if flip[t]:      # arm 0 es el positivo
+                        iA, yA, mA, vA = n0k, y0te, m0te, v0te
+                        iB, yB, mB, vB = n1k, y1te, m1te, v1te
+                        a1 = gaussian_auc(m0q[t], v0q[t], m1q[t], v1q[t])
+                    else:            # arm 1 es el positivo
+                        iA, yA, mA, vA = n1k, y1te, m1te, v1te
+                        iB, yB, mB, vB = n0k, y0te, m0te, v0te
+                        a1 = gaussian_auc(m1q[t], v1q[t], m0q[t], v0q[t])
+                    auc_k, var_k, psiA, psiB = residualized_local_auc(
+                        yA[iA], yB[iB], mA[iA], vA[iA], mB[iB], vB[iB], float(a1))
+                    infl[(k, t)] = (iA, psiA, iB, psiB, bool(flip[t]))
+                    pointwise[(k, t)] = (auc_k, np.sqrt(var_k), tru)
                 else:
-                    auc_k, var_k = delong_auc_var(y0te[o0[:k]], y1te[o1[:k]])
+                    auc_k, var_k = (delong_auc_var(y1te[n1k], y0te[n0k]) if flip[t]
+                                    else delong_auc_var(y0te[n0k], y1te[n1k]))
                 if not np.isfinite(auc_k) or not np.isfinite(var_k):
                     continue
                 for lv in ci_levels:
@@ -347,6 +424,48 @@ def main(config):
                                  "Fallback": float(fell_back),
                                  "Radius Ctrl": float(d0_[o0[k - 1]]), "Radius Case": float(d1_[o1[k - 1]])})
         ci_seconds = time.perf_counter() - t1
+
+        # --- Banda simultanea por multiplier bootstrap (Hajek) ---
+        # Los multiplicadores se sortean POR SUJETO y se comparten entre todos los puntos de
+        # la rejilla: eso es lo que transporta la dependencia entre puntos, que es justo lo que
+        # una correccion tipo Sidak no puede ver (supone independencia y ademas normalidad del
+        # pivote, cuyas colas medimos ~9.6x mas gordas que la normal).
+        if config["estimator"] == "residualized" and infl:
+            B = config["n_boot"]
+            brng = np.random.default_rng(config["seed"] + 977)
+            for k in sorted({kk for kk, _ in infl}):
+                ts = sorted(t for kk, t in infl if kk == k)
+                if not ts:
+                    continue
+                se_t = np.array([pointwise[(k, t)][1] for t in ts])
+                ok = se_t > 0
+                if ok.sum() < 2:
+                    continue
+                Tb = np.empty(B)
+                for b in range(B):
+                    xi0 = brng.standard_normal(n_te)
+                    xi1 = brng.standard_normal(n_te)
+                    G = np.empty(len(ts))
+                    for m, t in enumerate(ts):
+                        iA, psiA, iB, psiB, fl = infl[(k, t)]
+                        xA, xB = (xi0, xi1) if fl else (xi1, xi0)
+                        G[m] = (xA[iA] * psiA).sum() / k + (xB[iB] * psiB).sum() / k
+                    Tb[b] = np.max(np.abs(G[ok] / se_t[ok]))
+                for lv in ci_levels:
+                    c = float(np.quantile(Tb, lv))
+                    covered_all = True
+                    for m, t in enumerate(ts):
+                        a_t, s_t, tru_t = pointwise[(k, t)]
+                        lo, hi = max(0.0, a_t - c * s_t), min(1.0, a_t + c * s_t)
+                        inside = float(lo <= tru_t <= hi)
+                        covered_all = covered_all and bool(inside)
+                        rows.append({"Scenario": sceminario,
+                                     "Method": f"FNN-LocalKNN-k{k}-SIM{round(lv*100)}",
+                                     "k": k, "Row Index": int(row_ids[t]),
+                                     "x0": float(xvals[t]), "True AUC": tru_t,
+                                     "Estimated AUC Mean": a_t, "CI Lower": lo, "CI Upper": hi,
+                                     "SE Eta": s_t, "Covered": inside, "Fallback": 0.0,
+                                     "Radius Ctrl": c, "Radius Case": float(covered_all)})
 
         coverage_df = pd.DataFrame(rows)
         os.makedirs(op, exist_ok=True)
@@ -390,6 +509,12 @@ if __name__ == "__main__":
                         "replicas -> cada punto acumula ensayos independientes y la cobertura se "
                         "reporta como funcion de x. subjects: sujetos de test, como en las tandas previas.")
     p.add_argument("-gp", "--grid_points", type=int, default=11, help="Puntos de la rejilla fija")
+    p.add_argument("-nb", "--n_boot", type=int, default=1000,
+                   help="remuestreos del multiplier bootstrap (solo -est residualized)")
+    p.add_argument("-est", "--estimator", choices=["plain", "residualized"], default="plain",
+                   help="plain: Mann-Whitney sobre el vecindario (lo validado). residualized: "
+                        "congela la superficie del modelo y estima con el vecindario solo su "
+                        "error local, AUC~ = A1(z) + Delta(z). Generaliza plain (m==0).")
     p.add_argument("-loc", "--localize", choices=["model", "covariate"], default="model",
                    help="donde se toma el vecindario: 'model' en (mu_hat, sigma_hat) (por "
                         "defecto, el validado hasta ahora), 'covariate' directamente en x.")
@@ -407,4 +532,4 @@ if __name__ == "__main__":
           "weight_decay": a.weight_decay, "dropout": a.dropout, "hidden_layers": a.hidden_layers,
           "seed": a.seed, "pattern": a.pattern, "overwrite": a.overwrite, "interval": a.interval,
           "targets": a.targets, "grid_points": a.grid_points,
-          "localize": a.localize})
+          "localize": a.localize, "estimator": a.estimator, "n_boot": a.n_boot})
