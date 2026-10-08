@@ -60,7 +60,8 @@ sys.path.insert(0, os.path.join(_HERE, "..", "simulation"))
 
 from data_reg_real import normalize_column                      # noqa: E402
 from sandwich_delta_ci import fit_single                        # noqa: E402
-from coverage_local_knn import delong_auc_var, auc_interval     # noqa: E402
+from coverage_local_knn import (delong_auc_var, auc_interval,          # noqa: E402
+                                residualized_local_auc, gaussian_auc)
 
 GENDER_FILES = {"female": "df_f.csv", "male": "df_m.csv"}
 HORIZONS = {"tres": "3-year", "cinco": "5-year", "ocho": "8-year"}
@@ -235,6 +236,14 @@ def run_one(group_col, gender, args, device):
     ages0 = df[AGE_COL].to_numpy()[i0][ok0]
     ages1 = df[AGE_COL].to_numpy()[i1][ok1]
 
+    # Para el estimador residualizado: mu y var por sujeto (fuera de pliegue) y en la rejilla.
+    if args.estimator == "residualized":
+        mu0s, va0s = rep0[:, 0], rep0[:, 1] ** 2
+        mu1s, va1s = rep1[:, 0], rep1[:, 1] ** 2
+        gq0, gs0b = predict_mean_sd(models0, g_t)
+        gq1, gs1b = predict_mean_sd(models1, g_t)
+        gv0, gv1 = gs0b ** 2, gs1b ** 2
+
     rows = []
     for k in [min(kk, len(rep0n), len(rep1n)) for kk in args.k_values]:
       for t in range(len(raw)):
@@ -246,7 +255,18 @@ def run_one(group_col, gender, args, device):
         span = float(np.ptp(nb_ages))
         iqr = float(np.subtract(*np.percentile(nb_ages, [75, 25])))
         centre_err = float(abs(np.median(nb_ages) - raw[t, 0]))
-        if flip[t]:
+        if args.estimator == "residualized":
+            if flip[t]:      # el brazo 0 hace de positivo
+                iA, yA, mA, vA = o0, y0, mu0s, va0s
+                iB, yB, mB, vB = o1, y1, mu1s, va1s
+                a1 = gaussian_auc(gq0[t], gv0[t], gq1[t], gv1[t])
+            else:
+                iA, yA, mA, vA = o1, y1, mu1s, va1s
+                iB, yB, mB, vB = o0, y0, mu0s, va0s
+                a1 = gaussian_auc(gq1[t], gv1[t], gq0[t], gv0[t])
+            auc, var, _, _ = residualized_local_auc(
+                yA[iA], yB[iB], mA[iA], vA[iA], mB[iB], vB[iB], float(a1))
+        elif flip[t]:
             auc, var = delong_auc_var(y1[o1], y0[o0])
         else:
             auc, var = delong_auc_var(y0[o0], y1[o1])
@@ -298,6 +318,8 @@ def main():
     p.add_argument("--lo_q", type=float, default=0.025)
     p.add_argument("--hi_q", type=float, default=0.975)
     p.add_argument("-nf", "--n_folds", type=int, default=5)
+    p.add_argument("-est", "--estimator", choices=["plain", "residualized"],
+                   default="plain", help="ver src/simulation/coverage_local_knn.py")
     p.add_argument("-loc", "--localize", choices=["covariate", "model"], default="covariate",
                    help="where the neighbourhood is taken. 'model': in (mu_hat, sigma_hat), as "
                         "the simulation does -- necessary there because the covariate space is "

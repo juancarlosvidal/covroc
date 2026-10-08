@@ -370,16 +370,24 @@ def main(config):
             else:
                 q0, q1 = rep0[sel], rep1[sel]
 
-        # Para el estimador residualizado: mu y var de cada sujeto de test y de cada
-        # objetivo, con las redes del split de entrenamiento (nunca vieron estos desenlaces).
-        if config["estimator"] == "residualized":
-            m0te, v0te = mu_var_at(mu0, s0, X0te_t)
-            m1te, v1te = mu_var_at(mu1, s1, X1te_t)
-            if config["targets"] == "grid":
-                m0q, v0q = mu_var_at(mu0, s0, g_t)
-                m1q, v1q = mu_var_at(mu1, s1, g_t)
-            else:
-                m0q, v0q, m1q, v1q = m0te[sel], v0te[sel], m1te[sel], v1te[sel]
+        # mu y var con las redes del split de entrenamiento (nunca vieron estos desenlaces).
+        # Se calculan SIEMPRE, no solo para el estimador residualizado: el estimador puntual
+        # del manuscrito, A_FNN(z) = Phi[(mu_1-mu_0)/sqrt(var_1+var_0)] evaluado en el
+        # objetivo, se guarda en cada fila para poder contrastarlo contra la medida local.
+        # Ese contraste es lo que convierte la banda en una VALIDACION del estimador del
+        # articulo y no solo en un intervalo para una cantidad que el articulo tambien
+        # estima: si A_FNN(z) cae dentro de la banda, las dos afirmaciones son compatibles.
+        m0te, v0te = mu_var_at(mu0, s0, X0te_t)
+        m1te, v1te = mu_var_at(mu1, s1, X1te_t)
+        if config["targets"] == "grid":
+            m0q, v0q = mu_var_at(mu0, s0, g_t)
+            m1q, v1q = mu_var_at(mu1, s1, g_t)
+        else:
+            m0q, v0q, m1q, v1q = m0te[sel], v0te[sel], m1te[sel], v1te[sel]
+        # Orientado igual que el estadistico local, para que ambos estimen lo mismo.
+        auc_fnn = np.where(flip,
+                           gaussian_auc(m0q, v0q, m1q, v1q),
+                           gaussian_auc(m1q, v1q, m0q, v0q))
 
         t1 = time.perf_counter()
         rows = []
@@ -421,6 +429,8 @@ def main(config):
                                  "k": k, "Row Index": int(row_ids[t]), "x0": float(xvals[t]), "True AUC": tru,
                                  "Estimated AUC Mean": auc_k, "CI Lower": lo, "CI Upper": hi,
                                  "SE Eta": se_k, "Covered": float(lo <= tru <= hi),
+                                 "AUC FNN": float(auc_fnn[t]),
+                                 "FNN In Band": float(lo <= auc_fnn[t] <= hi),
                                  "Fallback": float(fell_back),
                                  "Radius Ctrl": float(d0_[o0[k - 1]]), "Radius Case": float(d1_[o1[k - 1]])})
         ci_seconds = time.perf_counter() - t1
@@ -465,6 +475,8 @@ def main(config):
                                      "x0": float(xvals[t]), "True AUC": tru_t,
                                      "Estimated AUC Mean": a_t, "CI Lower": lo, "CI Upper": hi,
                                      "SE Eta": s_t, "Covered": inside, "Fallback": 0.0,
+                                     "AUC FNN": float(auc_fnn[t]),
+                                     "FNN In Band": float(lo <= auc_fnn[t] <= hi),
                                      "Radius Ctrl": c, "Radius Case": float(covered_all)})
 
         coverage_df = pd.DataFrame(rows)
