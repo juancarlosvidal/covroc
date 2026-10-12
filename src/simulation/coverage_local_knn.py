@@ -89,6 +89,69 @@ def delong_auc_var(y0, y1):
     return auc, max(var, 0.0)
 
 
+def weighted_delong_auc_var(y0, y1, w0, w1):
+    """Hajek-weighted AUC = P(Y1 > Y0) under sampling weights, with the weighted
+    analogue of the DeLong variance.
+
+    Each subject stands for w_i members of the population, so the estimand is the
+    population AUC rather than the sample one, and both the statistic and the placement
+    values are weighted means:
+
+        V10_j = sum_i w0_i psi(y1_j, y0_i) / sum_i w0_i      (for each case j)
+        V01_i = 1 - sum_j w1_j psi(y1_j, y0_i) / sum_j w1_j  (for each control i)
+        AUC   = sum_j w1_j V10_j / sum_j w1_j
+
+    The variance is that of a Hajek mean with the placement values treated as fixed,
+    carrying the m/(m-1) correction that makes it coincide with delong_auc_var exactly
+    when the weights are equal -- so a weighted and an unweighted run differ only by the
+    weights, never by the estimator.
+
+    It accounts for the UNEQUAL WEIGHTS only. Stratification and clustering are design
+    features of a different kind: they are properties of which subjects appear together,
+    not of how much each one counts, and no quantity computed inside a single
+    neighbourhood can recover them. Where the design effect matters, the variance below
+    is the wrong one and a replicate-weights scheme over the primary sampling units is
+    needed instead.
+    """
+    m0, m1 = len(y0), len(y1)
+    if m0 < 2 or m1 < 2:
+        return np.nan, np.nan
+    w0 = np.asarray(w0, dtype=float)
+    w1 = np.asarray(w1, dtype=float)
+    W0, W1 = w0.sum(), w1.sum()
+    if not (W0 > 0 and W1 > 0):
+        return np.nan, np.nan
+
+    # Cumulative weight below / at each value, so a case's placement among the controls
+    # is read off in one pass rather than by forming the m0*m1 comparisons.
+    o0 = np.argsort(y0, kind="mergesort")
+    y0s, c0 = y0[o0], np.concatenate([[0.0], np.cumsum(w0[o0])])
+    v10 = (c0[np.searchsorted(y0s, y1, side="left")]
+           + c0[np.searchsorted(y0s, y1, side="right")]) / (2.0 * W0)
+
+    o1 = np.argsort(y1, kind="mergesort")
+    y1s, c1 = y1[o1], np.concatenate([[0.0], np.cumsum(w1[o1])])
+    v01 = 1.0 - (c1[np.searchsorted(y1s, y0, side="left")]
+                 + c1[np.searchsorted(y1s, y0, side="right")]) / (2.0 * W1)
+
+    auc = float((w1 * v10).sum() / W1)
+    var = float((w1 ** 2 * (v10 - auc) ** 2).sum() / W1 ** 2 * (m1 / (m1 - 1.0))
+                + (w0 ** 2 * (v01 - auc) ** 2).sum() / W0 ** 2 * (m0 / (m0 - 1.0)))
+    return auc, max(var, 0.0)
+
+
+def kish_neff(w):
+    """Kish's effective sample size, (sum w)^2 / sum w^2.
+
+    The number of equally weighted observations carrying the information that these
+    weighted ones do. It is what the Wilson fallback needs in place of k once the
+    subjects inside a neighbourhood no longer count equally.
+    """
+    w = np.asarray(w, dtype=float)
+    s2 = (w ** 2).sum()
+    return float(w.sum() ** 2 / s2) if s2 > 0 else float(len(w))
+
+
 def hanley_mcneil_neff(auc, n0, n1):
     """Effective independent sample size for a Mann-Whitney AUC: n_eff = A(1-A)/Var_HM(A),
     with Var_HM the Hanley-McNeil variance. The pairwise comparisons are dependent, so

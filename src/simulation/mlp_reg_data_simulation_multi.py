@@ -59,13 +59,34 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-def train_model(model, train_loader, val_loader, device, learning_rate, weight_decay, num_epochs=50, early_stop_patience=10):
+def train_model(model, train_loader, val_loader, device, learning_rate, weight_decay, num_epochs=50, early_stop_patience=10, decay_biases=True):
     """
     Entrena el modelo usando MSELoss con sample weights y regularización L2 (weight decay).
+
+    decay_biases=True (por defecto) penaliza TODOS los parámetros, sesgos incluidos. Es el
+    comportamiento original y el que produjo las cifras de cobertura ya publicadas, de modo
+    que ninguna llamada existente cambia de resultado: la rama por defecto es, literalmente,
+    la línea original.
+
+    decay_biases=False exime del weight decay a los sesgos y a cualquier parámetro de una
+    sola dimensión, que es la práctica habitual. Importa cuando el objetivo no está
+    centrado: con y ~ 6.4, el sesgo de la capa de salida tiene que sostenerse contra un
+    tirón constante hacia cero, y el brazo con menos sujetos es el que peor lo resiste. En
+    la cohorte NHANES eso desplaza la media ajustada del brazo de casos 0.66 SD hacia abajo
+    (138 casos frente a 2.247 controles), lo que infla la separación entre brazos y con ella
+    la AUC paramétrica. Penalizar un sesgo nunca tuvo justificación estadística: fija el
+    nivel, no la complejidad.
     """
     # Usamos MSELoss sin reducción para luego incorporar los sample weights
     criterion = nn.MSELoss(reduction='none')
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    if decay_biases:
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    else:
+        decayed = [p for p in model.parameters() if p.requires_grad and p.dim() > 1]
+        plain = [p for p in model.parameters() if p.requires_grad and p.dim() <= 1]
+        optimizer = optim.Adam(
+            [{"params": decayed, "weight_decay": weight_decay},
+             {"params": plain, "weight_decay": 0.0}], lr=learning_rate)
 
     best_val_loss = np.inf
     best_model_state = None
@@ -530,8 +551,23 @@ def main(config):
 
             plt.clf()
 
-            a = (mean_1 - mean_0) / std_1
-            b = std_0 / std_1
+            # Orientation: the arm the fitted means place higher takes the positive
+            # role, which is the convention rf_reg_data_simulation_multi_2.py already
+            # uses and the one this project standardised on, so that the methods in
+            # Table 1 are compared on the same footing rather than on two.
+            #
+            # Note what it costs, because it is not nothing: a >= 0 by construction, so
+            # the reported AUC can never fall below 0.5, and where the true AUC is near
+            # 0.5 the estimate is biased upward by about SE*sqrt(2/pi) -- more for a
+            # noisier estimator than for a precise one. It is the same convention for
+            # every method, so the comparison is at least consistent.
+            epsilon = 1e-8
+            a = np.where(mean_1 > mean_0,
+                         (mean_1 - mean_0) / (std_1 + epsilon),
+                         (mean_0 - mean_1) / (std_0 + epsilon))
+            b = np.where(mean_1 > mean_0,
+                         std_0 / (std_1 + epsilon),
+                         std_1 / (std_0 + epsilon))
 
             area = roc(a[2], b[2], residues_0, residues_1)
             print('auc {}'.format(area))

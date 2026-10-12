@@ -61,9 +61,10 @@ sys.path.insert(0, os.path.join(_HERE, "..", "simulation"))
 from data_reg_real import normalize_column                      # noqa: E402
 from sandwich_delta_ci import fit_single                        # noqa: E402
 from coverage_local_knn import (delong_auc_var, auc_interval,          # noqa: E402
-                                residualized_local_auc, gaussian_auc)
+                                residualized_local_auc, gaussian_auc,
+                                weighted_delong_auc_var, kish_neff)
 
-GENDER_FILES = {"female": "df_f.csv", "male": "df_m.csv"}
+GENDER_FILES = {"female": "df_f{sfx}.csv", "male": "df_m{sfx}.csv"}
 HORIZONS = {"tres": "3-year", "cinco": "5-year", "ocho": "8-year"}
 TARGET_COL = "TAC2"
 COVARIATES = ["RIDAGEYR.x", "BMI"]      # age, BMI -- the paper's stratified-by-sex model
@@ -88,6 +89,19 @@ def build_inputs(df, covariates, target_col, transform="log"):
     y = df[target_col].values.astype("float64")
     if transform == "log":
         y = np.log(np.clip(y, 1e-6, None))
+    elif transform == "logstd":
+        # log, then centred and scaled on the POOLED sample (both arms share one
+        # centring, so this is an affine transform of the marker and leaves the AUC
+        # unchanged). It is a numerical fix, not a modelling choice: Adam's
+        # weight_decay penalises every parameter including the output layer's bias,
+        # so an uncentred target of ~6.5 is held up against a constant pull toward
+        # zero, and the arm with fewer subjects -- always the cases -- has the weaker
+        # data term to resist it. Measured on the uncentred fit, mu_hat for the case
+        # arm sits 0.07 to 0.67 local SDs below the neighbourhood's own case mean
+        # while the control arm is unbiased, which inflates the estimated separation
+        # between arms by a median factor of 1.67.
+        y = np.log(np.clip(y, 1e-6, None))
+        y = (y - y.mean()) / (y.std() if y.std() > 0 else 1.0)
     elif transform == "standardize":
         y = (y - y.mean()) / (y.std() if y.std() > 0 else 1.0)
     elif transform != "none":
@@ -116,11 +130,15 @@ def crossfit_representation(X, Y, W, n_folds, mlp_config, device, seed):
         te = np.where(fold_of == f)[0]
         if len(te) == 0 or len(tr) < 10:
             continue
-        mu = fit_single(X[tr], Y[tr], W[tr], mlp_config, device)
+        # A seed of its own per network, derived from this call's seed and the fold, so
+        # the fit depends on its arguments and not on what ran before it in the process.
+        mu = fit_single(X[tr], Y[tr], W[tr], mlp_config, device,
+                        seed=1_000_003 * seed + 17 * f + 1)
         Xtr_t = torch.tensor(X[tr], dtype=torch.float32).to(device)
         with torch.no_grad():
             resid = (Y[tr].ravel() - mu(Xtr_t).view(-1).cpu().numpy()) ** 2
-        sg = fit_single(X[tr], resid.reshape(-1, 1).astype(np.float32), W[tr], mlp_config, device)
+        sg = fit_single(X[tr], resid.reshape(-1, 1).astype(np.float32), W[tr], mlp_config,
+                        device, seed=1_000_003 * seed + 17 * f + 2)
         Xte_t = torch.tensor(X[te], dtype=torch.float32).to(device)
         with torch.no_grad():
             m = mu(Xte_t).view(-1).cpu().numpy()
@@ -146,28 +164,41 @@ def predict_mean_sd(models, X_t):
     return np.mean(ms, axis=0), np.mean(ss, axis=0)
 
 
-def age_grid(df, covariates, n_grid, lo_q, hi_q):
+def age_grid(df, covariates, n_grid, lo_q, hi_q, age_min=None, age_max=None):
     """Grid of covariate profiles: age varies over an inner quantile range, BMI at median.
 
     The inner quantile range rather than the full observed range keeps the targets inside
     the support, where a neighbourhood is meaningful (Reviewer 2's Major Comment 7).
+    age_min/age_max override that with explicit endpoints, for reporting over a region
+    chosen on the data's support rather than on its quantiles.
     """
-    ages = np.linspace(df[AGE_COL].quantile(lo_q), df[AGE_COL].quantile(hi_q), n_grid)
+    lo = df[AGE_COL].quantile(lo_q) if age_min is None else float(age_min)
+    hi = df[AGE_COL].quantile(hi_q) if age_max is None else float(age_max)
+    ages = np.linspace(lo, hi, n_grid)
     raw = np.zeros((n_grid, len(covariates)))
     for j, c in enumerate(covariates):
         raw[:, j] = ages if c == AGE_COL else df[c].median()
-    # Normalize with the same per-column statistics the training inputs used.
+    # Normalize with the same per-column statistics the training inputs used, which is
+    # the z-score StandardScaler applies inside build_inputs -> normalize_column.
+    #
+    # This used to be a min-max scaling to [0, 1], which is NOT what the networks saw:
+    # age spans [-1.65, 1.86] as a z-score against [0, 1] under min-max, and BMI spans
+    # [-2.03, 6.97] because of its upper tail. Every grid point was therefore handed to
+    # the network as a covariate value other than the one the axis labelled it with, so
+    # the plug-in curve described the wrong profiles. Anything model-based computed
+    # before this was fixed has to be recomputed; the rank-based band does not, since it
+    # never passes through here.
     norm_cols = []
     for j, c in enumerate(covariates):
         col = df[c].to_numpy(dtype=float)
-        lo, hi = np.nanmin(col), np.nanmax(col)
-        rngc = hi - lo
-        norm_cols.append((raw[:, j] - lo) / rngc if rngc > 0 else np.zeros(n_grid))
+        mu, sd = np.nanmean(col), np.nanstd(col)   # ddof=0, as StandardScaler uses
+        norm_cols.append((raw[:, j] - mu) / sd if sd > 0 else np.zeros(n_grid))
     return raw, np.column_stack(norm_cols).astype("float32")
 
 
 def run_one(group_col, gender, args, device):
-    path = os.path.join(args.input_dir, GENDER_FILES[gender])
+    path = os.path.join(args.input_dir,
+                        GENDER_FILES[gender].format(sfx=args.file_suffix))
     df = pd.read_csv(path).dropna(subset=COVARIATES + [TARGET_COL, group_col]).reset_index(drop=True)
 
     X, Y, W = build_inputs(df, COVARIATES, TARGET_COL, args.transform)
@@ -175,7 +206,7 @@ def run_one(group_col, gender, args, device):
     i1 = np.where(df[group_col].to_numpy() == 1)[0]
     n0, n1 = len(i0), len(i1)
     print(f"\n=== {HORIZONS[group_col]} / {gender}: N={len(df)}  controls={n0}  cases={n1} ===")
-    kmax = max(args.k_values)
+    kmax = max(k1 for _, k1 in args.k_values)
     if n1 < 4 * kmax:
         print(f"  !! only {n1} cases: k={kmax} is {100*kmax/n1:.0f}% of the arm. "
               f"Bands reported, but the largest k is barely local here.")
@@ -183,28 +214,81 @@ def run_one(group_col, gender, args, device):
     mlp_config = {"hidden_layers": args.hidden_layers, "dropout": args.dropout,
                   "num_epochs": args.num_epochs, "batch_size": args.batch_size,
                   "learning_rate": args.learning_rate, "weight_decay": args.weight_decay,
-                  "early_stop_patience": args.early_stop_patience}
+                  "early_stop_patience": args.early_stop_patience,
+                  "decay_biases": not args.no_bias_decay}
+
+    # Optional ensemble over independent restarts. Re-fitting the identical model with a
+    # different seed moves the plug-in AUC on this cohort by 0.044 on average (max 0.087),
+    # which is pure optimisation variability: same data, same architecture, same
+    # hyperparameters. Averaging the fold models over several seeds is the direct way to
+    # damp it. It does NOT touch the larger, separate effect of the marker's scale
+    # (0.107 between --transform log and logstd), which is a regularisation bias rather
+    # than variance and does not average away.
+    #
+    # predict_mean_sd already averages over whatever model list it is handed, so the
+    # ensemble is formed simply by concatenating the per-seed fold models; the per-subject
+    # out-of-fold representations are averaged across seeds in the same way.
+    def fit_arm(Xa, Ya, Wa, base_seed):
+        reps, mods = [], []
+        for s in range(args.n_seeds):
+            r, m = crossfit_representation(Xa, Ya, Wa, args.n_folds, mlp_config,
+                                           device, base_seed + 1000 * s)
+            reps.append(r)
+            mods += m
+        return np.mean(reps, axis=0), mods
 
     t0 = time.perf_counter()
-    rep0, models0 = crossfit_representation(X[i0], Y[i0], W[i0], args.n_folds, mlp_config, device, args.seed)
-    rep1, models1 = crossfit_representation(X[i1], Y[i1], W[i1], args.n_folds, mlp_config, device, args.seed + 1)
+    rep0, models0 = fit_arm(X[i0], Y[i0], W[i0], args.seed)
+    rep1, models1 = fit_arm(X[i1], Y[i1], W[i1], args.seed + 1)
     fit_seconds = time.perf_counter() - t0
+    if args.n_seeds > 1:
+        print(f"  ensemble of {args.n_seeds} restarts per arm "
+              f"({len(models0)} fold models each)")
 
     ok0 = np.isfinite(rep0).all(axis=1)
     ok1 = np.isfinite(rep1).all(axis=1)
     rep0, y0 = rep0[ok0], Y[i0].ravel()[ok0]
     rep1, y1 = rep1[ok1], Y[i1].ravel()[ok1]
+    # The survey weights, which the networks already carry through train_model's loss.
+    # Whether the BAND uses them as well is a separate decision: --band_weights.
+    wt0 = W[i0].ravel()[ok0].astype(float)
+    wt1 = W[i1].ravel()[ok1].astype(float)
+    if not args.band_weights:
+        wt0, wt1 = np.ones_like(wt0), np.ones_like(wt1)
+    elif np.allclose(wt0, wt0[0]) and np.allclose(wt1, wt1[0]):
+        print("  !! --band_weights given but every subject carries the same weight; "
+              "the band is unchanged. Did you mean --file_suffix _full?")
+    print(f"  band weights: {'on' if args.band_weights else 'off'} | "
+          f"weight range {min(wt0.min(), wt1.min()):.2f}-{max(wt0.max(), wt1.max()):.2f}")
 
     # One standardization over the pooled representations of each arm (see module docstring).
     sc0 = np.where(rep0.std(axis=0) > 0, rep0.std(axis=0), 1.0)
     sc1 = np.where(rep1.std(axis=0) > 0, rep1.std(axis=0), 1.0)
     rep0n, rep1n = rep0 / sc0, rep1 / sc1
 
-    raw, gnorm = age_grid(df, COVARIATES, args.grid_points, args.lo_q, args.hi_q)
+    raw, gnorm = age_grid(df, COVARIATES, args.grid_points, args.lo_q, args.hi_q,
+                          args.age_min, args.age_max)
     g_t = torch.tensor(gnorm, dtype=torch.float32).to(device)
     gm0, gs0 = predict_mean_sd(models0, g_t)
     gm1, gs1 = predict_mean_sd(models1, g_t)
-    flip = gm1 < gm0          # decedents have lower TAC -> fires, giving the protective orientation
+    # Orientation: which arm plays the "higher" role at each grid point.
+    #
+    # "auto" reads it from the fitted means, as the simulation does. That is safe when the
+    # arms are well separated, but on this cohort they are not: re-fitting the identical
+    # model on an affine rescaling of the marker -- a transform the AUC cannot see --
+    # moves the sign at 20% of the male grid points, and each sign change maps the
+    # reported AUC from A to 1-A, a jump of 0.288 on average. The sign is read from the
+    # model, so it carries the model's instability into an estimate that is otherwise
+    # model-free.
+    #
+    # Here the direction is known a priori and need not be estimated at all: TAC is
+    # protective, so controls sit above cases by construction of the cohort. Fixing it
+    # removes that failure mode outright. The simulation keeps "auto" because there the
+    # truth is unknown to the estimator and the arms are well separated.
+    if args.orientation == "auto":
+        flip = gm1 < gm0
+    else:
+        flip = np.full(len(gm0), args.orientation == "controls-higher", dtype=bool)
 
     # Convergence check on the second stage, reported because it is what the parametric AUC
     # is most sensitive to and what fails silently: the variance network's target is of order
@@ -217,8 +301,10 @@ def run_one(group_col, gender, args, device):
         print("  !! the variance network has NOT converged; the parametric AUC below is inflated")
 
     # Parametric (Gaussian location-scale) AUC, for contrast with the rank-based band.
-    a_par = np.where(gm1 > gm0, (gm1 - gm0) / (gs1 + 1e-8), (gm0 - gm1) / (gs0 + 1e-8))
-    b_par = np.where(gm1 > gm0, gs0 / (gs1 + 1e-8), gs1 / (gs0 + 1e-8))
+    # Driven by the same `flip` as the local statistic, so that the two are always
+    # reported in the same direction and remain comparable point by point.
+    a_par = np.where(flip, (gm0 - gm1) / (gs0 + 1e-8), (gm1 - gm0) / (gs1 + 1e-8))
+    b_par = np.where(flip, gs1 / (gs0 + 1e-8), gs0 / (gs1 + 1e-8))
     auc_par = norm.cdf(a_par / np.sqrt(1 + b_par ** 2))
 
     if args.localize == "covariate":
@@ -236,6 +322,24 @@ def run_one(group_col, gender, args, device):
     ages0 = df[AGE_COL].to_numpy()[i0][ok0]
     ages1 = df[AGE_COL].to_numpy()[i1][ok1]
 
+    # Optional floor on who may be a neighbour. The networks are still fitted on the whole
+    # sample -- this governs the BAND, which is the part that reaches for subjects wherever
+    # it can find them. Without it, a neighbourhood centred at 50 is free to pull in
+    # twenty-year-olds from the region the cohort cannot support, and the comparison then
+    # carries an age difference between the arms rather than holding age fixed. The floor
+    # sits below the first grid point on purpose: it bounds how far the neighbourhood may
+    # reach down, without emptying the youngest target of its own neighbours.
+    if args.neighbour_age_min is not None:
+        keep0 = ages0 >= args.neighbour_age_min
+        keep1 = ages1 >= args.neighbour_age_min
+        print(f"  neighbour pool restricted to age >= {args.neighbour_age_min:g}: "
+              f"controls {len(ages0)} -> {int(keep0.sum())}, "
+              f"cases {len(ages1)} -> {int(keep1.sum())}")
+        rep0, rep0n, y0, wt0, ages0 = (rep0[keep0], rep0n[keep0], y0[keep0],
+                                       wt0[keep0], ages0[keep0])
+        rep1, rep1n, y1, wt1, ages1 = (rep1[keep1], rep1n[keep1], y1[keep1],
+                                       wt1[keep1], ages1[keep1])
+
     # Para el estimador residualizado: mu y var por sujeto (fuera de pliegue) y en la rejilla.
     if args.estimator == "residualized":
         mu0s, va0s = rep0[:, 0], rep0[:, 1] ** 2
@@ -244,17 +348,59 @@ def run_one(group_col, gender, args, device):
         gq1, gs1b = predict_mean_sd(models1, g_t)
         gv0, gv1 = gs0b ** 2, gs1b ** 2
 
+    # Each arm is clipped to its own size, so a request larger than an arm takes that
+    # whole arm. Several requests can then land on the same pair of neighbourhoods --
+    # every case-arm k at or above the case count collapses to the whole case arm, where
+    # the "local" estimate is the arm's global AUC. Keep each distinct pair once, in the
+    # order asked for, and say which requests merged.
+    n0a, n1a = len(rep0n), len(rep1n)
+    k_eff, merged = [], []
+    for kk0, kk1 in args.k_values:
+        pair = (min(kk0, n0a), min(kk1, n1a))
+        if pair in k_eff:
+            merged.append(f"{kk0}:{kk1}")
+        else:
+            k_eff.append(pair)
+    if merged:
+        print(f"  k={merged} exceed an arm ({n0a} controls, {n1a} cases) and repeat a "
+              f"pair already asked for; dropped. Reporting "
+              f"{[f'{a}:{b}' for a, b in k_eff]}")
+
     rows = []
-    for k in [min(kk, len(rep0n), len(rep1n)) for kk in args.k_values]:
+    for k0, k1 in k_eff:
       for t in range(len(raw)):
-        d0 = np.linalg.norm(rep0n - q0[t], axis=1)
+        # The case arm is chosen first, because it is the one that cannot be moved: with
+        # 53 to 234 cases over a sixty-year age range, the k1 "nearest" cases to a young
+        # target are not near it at all.
         d1 = np.linalg.norm(rep1n - q1[t], axis=1)
-        o0, o1 = np.argsort(d0)[:k], np.argsort(d1)[:k]
-        # How local is this neighbourhood, in the units the figure is drawn in?
+        o1 = np.argsort(d1)[:k1]
+
+        # Where the controls are taken from. The default follows the grid point, which is
+        # what makes the estimate nominally an estimate AT that covariate value. But when
+        # the case neighbourhood sits far from the grid point, the two arms are centred at
+        # different ages -- 45 against 24 at a target of 21 -- and the comparison then
+        # mixes the age difference between the arms into a statistic whose whole purpose
+        # is to hold age fixed. --match_controls anchors the controls on the case
+        # neighbourhood's own centroid instead, which removes that confounding by
+        # construction. What it cannot do is put the estimate back at the grid point: the
+        # result describes the age the cases actually occupy, which is reported as
+        # "Case Median Age" and is what such a run should be plotted against.
+        anchor = rep1n[o1].mean(axis=0) if args.match_controls else q0[t]
+        d0 = np.linalg.norm(rep0n - anchor, axis=1)
+        o0 = np.argsort(d0)[:k0]
+        # How local is this neighbourhood, in the units the figure is drawn in? The
+        # pooled figures are kept for continuity with the symmetric runs, but once the
+        # arms are sized differently the pooled ones are dominated by whichever arm is
+        # larger, so the case arm -- always the binding one here -- is also reported
+        # on its own.
         nb_ages = np.r_[ages0[o0], ages1[o1]]
         span = float(np.ptp(nb_ages))
         iqr = float(np.subtract(*np.percentile(nb_ages, [75, 25])))
         centre_err = float(abs(np.median(nb_ages) - raw[t, 0]))
+        case_iqr = float(np.subtract(*np.percentile(ages1[o1], [75, 25])))
+        case_centre_err = float(abs(np.median(ages1[o1]) - raw[t, 0]))
+        case_med_age = float(np.median(ages1[o1]))
+        ctrl_med_age = float(np.median(ages0[o0]))
         if args.estimator == "residualized":
             if flip[t]:      # el brazo 0 hace de positivo
                 iA, yA, mA, vA = o0, y0, mu0s, va0s
@@ -267,25 +413,80 @@ def run_one(group_col, gender, args, device):
             auc, var, _, _ = residualized_local_auc(
                 yA[iA], yB[iB], mA[iA], vA[iA], mB[iB], vB[iB], float(a1))
         elif flip[t]:
-            auc, var = delong_auc_var(y1[o1], y0[o0])
+            auc, var = weighted_delong_auc_var(y1[o1], y0[o0], wt1[o1], wt0[o0])
         else:
-            auc, var = delong_auc_var(y0[o0], y1[o1])
+            auc, var = weighted_delong_auc_var(y0[o0], y1[o1], wt0[o0], wt1[o1])
         if not np.isfinite(auc) or not np.isfinite(var):
             continue
+        # With unequal weights the k subjects of an arm no longer carry k observations'
+        # worth of information, and it is that reduced count, not k, that the saturation
+        # fallback has to be told about.
+        neff0, neff1 = kish_neff(wt0[o0]), kish_neff(wt1[o1])
         rec = {"Horizon": HORIZONS[group_col], "Sex": gender, "Age": float(raw[t, 0]),
-               "AUC": float(auc), "AUC Parametric": float(auc_par[t]), "k": k, "N Controls": len(rep0n), "N Cases": len(rep1n),
-               "Case Arm Fraction": float(k / len(rep1n)), "Age Span": span,
+               "AUC": float(auc), "AUC Parametric": float(auc_par[t]),
+               # "k" stays the CASE-arm size: it is the binding one, and it keeps the
+               # symmetric runs and everything that selects on it unchanged.
+               "k": k1, "k Controls": k0, "k Cases": k1,
+               "N Controls": len(rep0n), "N Cases": len(rep1n),
+               "Case Arm Fraction": float(k1 / len(rep1n)),
+               "Control Arm Fraction": float(k0 / len(rep0n)), "Age Span": span,
                "Age IQR": iqr, "Age Centre Error": centre_err,
-               "Flipped": bool(flip[t])}
+               "Case Age IQR": case_iqr, "Case Age Centre Error": case_centre_err,
+               "Case Median Age": case_med_age, "Control Median Age": ctrl_med_age,
+               "Age Mismatch": case_med_age - ctrl_med_age,
+               "Flipped": bool(flip[t]),
+               "N0 Eff": neff0, "N1 Eff": neff1}
+
+        # Diagnostic: the two inputs the parametric AUC is built from, each paired with
+        # the neighbourhood's own non-parametric counterpart. When "AUC Parametric"
+        # departs from "AUC", these say whether the discrepancy sits in the numerator
+        # (the mean gap) or the denominator (the scale), which the AUC alone cannot
+        # distinguish. Nothing downstream uses them.
+        rec.update({
+            "Mu0 Net": float(gm0[t]), "Mu1 Net": float(gm1[t]),
+            "Sigma0 Net": float(gs0[t]), "Sigma1 Net": float(gs1[t]),
+            "Mu0 Local": float(np.mean(y0[o0])), "Mu1 Local": float(np.mean(y1[o1])),
+            "Sigma0 Local": float(np.std(y0[o0], ddof=1)),
+            "Sigma1 Local": float(np.std(y1[o1], ddof=1)),
+        })
         for lv in args.ci_levels:
             z = norm.ppf(1 - (1 - lv) / 2)
-            lo, hi, se, fell = auc_interval(auc, var, k, k, z, "logit")
+            # neff0/neff1 are k0/k1 exactly when the band is unweighted.
+            lo, hi, se, fell = auc_interval(auc, var, neff0, neff1, z, "logit")
             tag = f"{round(lv*100)}"
             rec[f"CI{tag} Lower"] = lo
             rec[f"CI{tag} Upper"] = hi
             rec[f"CI{tag} Fallback"] = float(fell)
         rec["SE"] = se
         rows.append(rec)
+
+    # The plug-in at every subject's OWN covariates, rather than on the grid at the
+    # median BMI. It needs no extra fitting and no renormalisation: X already holds each
+    # subject's covariates on the scale the networks were trained on, so the two arms'
+    # models are simply evaluated there. The result is one AUC per subject, which is
+    # what a scatter against age shows -- and the vertical spread at a given age is the
+    # BMI variation the grid curve hides by fixing BMI at its median.
+    if args.subject_auc:
+        Xt = torch.tensor(X, dtype=torch.float32).to(device)
+        sm0, ss0 = predict_mean_sd(models0, Xt)
+        sm1, ss1 = predict_mean_sd(models1, Xt)
+        if args.orientation == "auto":
+            sflip = sm1 < sm0
+        else:
+            sflip = np.full(len(sm0), args.orientation == "controls-higher", dtype=bool)
+        sa = np.where(sflip, (sm0 - sm1) / (ss0 + 1e-8), (sm1 - sm0) / (ss1 + 1e-8))
+        sb = np.where(sflip, ss1 / (ss0 + 1e-8), ss0 / (ss1 + 1e-8))
+        subj = pd.DataFrame({
+            "Horizon": HORIZONS[group_col], "Sex": gender,
+            AGE_COL: df[AGE_COL].to_numpy(float), "BMI": df["BMI"].to_numpy(float),
+            "Arm": df[group_col].to_numpy(int),
+            "AUC Parametric": norm.cdf(sa / np.sqrt(1 + sb ** 2)),
+            "Mu0 Net": sm0, "Mu1 Net": sm1, "Sigma0 Net": ss0, "Sigma1 Net": ss1,
+        })
+        os.makedirs(args.output_dir, exist_ok=True)
+        sdest = os.path.join(args.output_dir, f"subjects_{group_col}_{gender}.csv")
+        subj.to_csv(sdest, index=False)
+        print(f"  {len(subj)} per-subject AUCs -> {sdest}")
 
     out = pd.DataFrame(rows)
     os.makedirs(args.output_dir, exist_ok=True)
@@ -306,6 +507,15 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-i", "--input_dir", default="./data")
+    p.add_argument("-fs", "--file_suffix", default="",
+                   help="suffix on the cohort files: \"\" reads df_f.csv/df_m.csv, "
+                        "\"_full\" reads df_f_full.csv/df_m_full.csv, which carry the "
+                        "survey weights, strata and PSUs from merge_survey_design.py.")
+    p.add_argument("--band_weights", action="store_true",
+                   help="let the survey weights into the local statistic as well, which "
+                        "makes it estimate the population AUC rather than the cohort's. "
+                        "The network fit uses them whenever the column is present; this "
+                        "flag governs only the band, so the two can be separated.")
     p.add_argument("-o", "--output_dir", default="./output/knn_bands_real")
     p.add_argument("-g", "--group_col", choices=list(HORIZONS), default=None)
     p.add_argument("-s", "--sex", choices=list(GENDER_FILES), default=None)
@@ -313,10 +523,25 @@ def main():
     p.add_argument("-k", "--k_list", type=str, default="20,30,50",
                    help="neighbours per arm; comma-separated sweeps several from ONE fit. "
                         "Small k is noisy and wide, large k stops being local -- the "
-                        "Age Span column reports how many years each neighbourhood covers.")
+                        "Age Span column reports how many years each neighbourhood "
+                        "covers. An entry may be a single number, which sizes both arms "
+                        "alike, or CONTROLS:CASES, which sizes them apart -- e.g. "
+                        "\"300:30\". The arms here are 2,300 controls against 53-234 "
+                        "cases, so the case arm sets both the locality and the variance "
+                        "floor; enlarging the control arm costs almost no locality and "
+                        "removes the control term S0^2/k0 from the variance, which can "
+                        "shrink the interval by at most a factor 1/sqrt(2).")
     p.add_argument("-gp", "--grid_points", type=int, default=21)
     p.add_argument("--lo_q", type=float, default=0.025)
     p.add_argument("--hi_q", type=float, default=0.975)
+    p.add_argument("--age_min", type=float, default=None,
+                   help="first grid age, overriding --lo_q")
+    p.add_argument("--age_max", type=float, default=None,
+                   help="last grid age, overriding --hi_q")
+    p.add_argument("--neighbour_age_min", type=float, default=None,
+                   help="exclude subjects below this age from the k-NN pool of both "
+                        "arms. Bounds how far down a neighbourhood may reach; the "
+                        "networks are still fitted on the whole sample.")
     p.add_argument("-nf", "--n_folds", type=int, default=5)
     p.add_argument("-est", "--estimator", choices=["plain", "residualized"],
                    default="plain", help="ver src/simulation/coverage_local_knn.py")
@@ -329,6 +554,20 @@ def main():
                         "neighbourhood 14 years off its target age against 2 for 'covariate', "
                         "because mu_hat varies far less along the age grid than it does between "
                         "subjects in this cohort.")
+    p.add_argument("--no_bias_decay", action="store_true",
+                   help="exempt the biases from the L2 penalty. Off by default so that "
+                        "earlier runs reproduce; on, it removes about two fifths of the "
+                        "downward bias in the fitted case mean, and combines with "
+                        "--transform logstd, which removes rather more of it.")
+    p.add_argument("--subject_auc", action="store_true",
+                   help="also write subjects_<horizon>_<sex>.csv: the plug-in AUC at "
+                        "every subject's own covariates, for a scatter against age.")
+    p.add_argument("--match_controls", action="store_true",
+                   help="take the controls nearest the CASE neighbourhood's centroid "
+                        "rather than nearest the grid point, so the two arms are centred "
+                        "on the same covariate value. Removes the age mismatch between "
+                        "the arms; in exchange the estimate describes \"Case Median Age\" "
+                        "rather than the grid age, and should be plotted against it.")
     p.add_argument("-ci", "--ci_level", type=str, default="0.95,0.8,0.5")
     p.add_argument("-hl", "--hidden_layers", type=str, default="[64,32]")
     p.add_argument("-e", "--num_epochs", type=int, default=3000)
@@ -337,28 +576,64 @@ def main():
     p.add_argument("-lr", "--learning_rate", type=float, default=1e-2)
     p.add_argument("-wd", "--weight_decay", type=float, default=1e-4)
     p.add_argument("-dr", "--dropout", type=float, default=0.2)
-    p.add_argument("--transform", choices=["log", "standardize", "none"], default="log",
+    p.add_argument("-ns", "--n_seeds", type=int, default=1,
+                   help="independent restarts to average over, per arm. 1 (default) "
+                        "reproduces a single fit. Cost scales linearly.")
+    p.add_argument("--orientation",
+                   choices=["auto", "controls-higher", "cases-higher"],
+                   default="auto",
+                   help="which arm is taken to sit higher on the marker. 'auto' reads "
+                        "it per grid point from the fitted means, as the simulation "
+                        "does; the two fixed settings impose it a priori. The default "
+                        "is 'controls-higher' because TAC is protective, so the "
+                        "direction is known and does not need estimating -- see the "
+                        "comment at the flip assignment for why estimating it here is "
+                        "unstable.")
+    p.add_argument("--transform",
+                   choices=["log", "logstd", "standardize", "none"], default="log",
                    help="monotone map applied to the biomarker before fitting; does not "
                         "change the AUC, which is rank-based (default: log)")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto",
+                   help="'auto' takes the best available. Pin it to 'cpu' when the run "
+                        "has to be reproducible across machines: the same seed on CPU "
+                        "and on GPU does not give the same weights.")
+    p.add_argument("--threads", type=int, default=0,
+                   help="torch CPU threads; 0 leaves torch's own default. Under SLURM, "
+                        "pass $SLURM_CPUS_PER_TASK.")
     a = p.parse_args()
 
     a.ci_levels = tuple(float(x) for x in a.ci_level.split(","))
     a.hidden_layers = [int(x) for x in a.hidden_layers.strip("[]").split(",")]
-    a.k_values = [int(x) for x in str(a.k_list).split(",")]
+    # "k" sizes both arms alike; "k0:k1" sizes the control and case arms apart.
+    a.k_values = []
+    for item in str(a.k_list).split(","):
+        item = item.strip()
+        if ":" in item:
+            s0, s1 = item.split(":", 1)
+            a.k_values.append((int(s0), int(s1)))
+        else:
+            a.k_values.append((int(item), int(item)))
 
     if not a.all and (a.group_col is None or a.sex is None):
         p.error("give both -g and -s, or --all")
 
     torch.manual_seed(a.seed)
     np.random.seed(a.seed)
-    if torch.cuda.is_available():
+    if a.device != "auto":
+        device = torch.device(a.device)
+    elif torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
-    print(f"device: {device} | k={a.k_values} | folds={a.n_folds} | "
+    # Small networks over a few thousand rows: more threads than cores is slower, not
+    # faster, and under SLURM it also oversubscribes the allocation.
+    if device.type == "cpu" and a.threads:
+        torch.set_num_threads(a.threads)
+    print(f"device: {device} | k(controls:cases)="
+          f"{[f'{x}:{y}' for x, y in a.k_values]} | folds={a.n_folds} | "
           f"grid={a.grid_points} | transform={a.transform}")
 
     combos = ([(g, s) for g in HORIZONS for s in GENDER_FILES] if a.all

@@ -96,14 +96,33 @@ def _make_loader(X, y, w, batch_size, shuffle=True):
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
 
 
-def fit_single(X, Y, W, mlp_config, device, val_frac=0.15):
+def fit_single(X, Y, W, mlp_config, device, val_frac=0.15, seed=None):
     """Fits ONE MLP on ALL of (X, Y, W) -- no cross-fitting/folds. An internal train/val
     split is still used purely for early stopping (same convention as elsewhere in the
     pipeline), but the RETURNED model is a single, well-defined M-estimator fit on the
     full sample, which the sandwich/delta theory requires.
+
+    seed=None (the default) draws the split, the initialisation and the dropout masks from
+    the PROCESS-WIDE generators. That makes a fit depend on how many draws preceded it, so
+    the same data with the same --seed gives different parameters according to what else
+    ran first in the same process: in a --all pass over six NHANES combinations, the fifth
+    one is fitted from whatever state the previous four left behind. Measured on the
+    cohort, that moved the plug-in AUC by up to 0.062 between an --all run and the same
+    combination run alone.
+
+    Passing a seed makes the fit depend on nothing but its arguments. The default is left
+    as it was so that every existing caller -- the whole simulation -- reproduces exactly;
+    only callers that opt in change, and they change from irreproducible to reproducible.
     """
     n = X.shape[0]
-    perm = np.random.permutation(n)
+    if seed is None:
+        perm = np.random.permutation(n)
+    else:
+        # Both generators, because the split comes from numpy while the initialisation
+        # and the dropout masks come from torch; seeding one and not the other leaves the
+        # fit order-dependent through the other.
+        perm = np.random.default_rng(seed).permutation(n)
+        torch.manual_seed(seed)
     n_val = max(1, int(round(n * val_frac)))
     val_idx, train_idx = perm[:n_val], perm[n_val:]
     model = MLP(X.shape[1], mlp_config["hidden_layers"], mlp_config["dropout"]).to(device)
@@ -113,6 +132,9 @@ def fit_single(X, Y, W, mlp_config, device, val_frac=0.15):
         _make_loader(X[val_idx], Y[val_idx], W[val_idx], mlp_config["batch_size"], shuffle=False),
         device, mlp_config["learning_rate"], mlp_config["weight_decay"],
         mlp_config["num_epochs"], mlp_config["early_stop_patience"],
+        # Read from the config rather than taken as an argument, so a caller that does
+        # not set it -- every simulation one -- keeps the original behaviour untouched.
+        decay_biases=mlp_config.get("decay_biases", True),
     )
     model.eval()
     return model

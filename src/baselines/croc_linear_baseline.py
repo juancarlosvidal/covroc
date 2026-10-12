@@ -36,7 +36,7 @@ def prepare_nn_data(df, covariates, target):
     return {'x': x, 'y': y, 'w': w}, df_clean
 
 def compute_ROC(formula_h, formula_d, data_h, data_d, newdata, est_cdf, pauc, p,
-                 newdata_h=None, newdata_d=None, adaptive_direction=False):
+                 newdata_h=None, newdata_d=None, adaptive_direction=True):
 
 
     """
@@ -49,7 +49,12 @@ def compute_ROC(formula_h, formula_d, data_h, data_d, newdata, est_cdf, pauc, p,
     rows (the row-paired convention the FNN/RF ground-truth comparison in
     ground_truth_auc.py uses).
 
-    adaptive_direction=False (default) always uses a = (mu_h - mu_d)/sigma_d, matching
+    adaptive_direction=True (default since the orientation convention was unified across
+    methods) reports the adaptive contrast, matching the random forest and the FNN. The
+    fixed-direction branch is kept for the comparison with ROCnReg::cROC.sp, which uses
+    it.
+
+    adaptive_direction=False uses a = (mu_h - mu_d)/sigma_d, matching
     the paper's Methods formula and ROCnReg::cROC.sp's own fixed-direction convention --
     keep this default when validating against the real R package (R/croc_sp_validation.R,
     src/baselines/croc_sp_validation.py) or reporting the real-data NHANES case study, so
@@ -143,7 +148,7 @@ def compute_ROC(formula_h, formula_d, data_h, data_d, newdata, est_cdf, pauc, p,
     return res
 
 def do_boost_roc(i, formula_h, formula_d, data_h, data_d, newdata, croc, est_cdf, pauc, p, marker,
-                  newdata_h=None, newdata_d=None, adaptive_direction=False):
+                  newdata_h=None, newdata_d=None, adaptive_direction=True):
     """
     One bootstrap replication: resample the residuals (with replacement) and recalculate the ROC curve.
     """
