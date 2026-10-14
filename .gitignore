@@ -239,3 +239,6 @@ __marimo__/
 # Claude Code local session state
 .claude/
 
+
+# Local editor configuration, not part of the published code
+CLAUDE.md
